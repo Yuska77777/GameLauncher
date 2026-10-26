@@ -129,7 +129,7 @@ class ImageStore(private val ctx: Context) {
         private set
     private val dir = File(ctx.filesDir, "img").apply { mkdirs() }
     private val cache = object : LruCache<String, ImageBitmap>(48 * 1024 * 1024) {
-        override fun sizeOf(key: String, value: ImageBitmap) = value.asAndroidBitmap().byteCount
+        override fun sizeOf(key: String, value: ImageBitmap): Int = value.asAndroidBitmap().byteCount
     }
 
     private fun file(key: String) = File(dir, "$key.img")
@@ -158,10 +158,9 @@ class ImageStore(private val ctx: Context) {
         BitmapFactory.decodeFile(f.path, o)
         var s = 1
         while (o.outWidth / (s * 2) >= max || o.outHeight / (s * 2) >= max) s *= 2
-        val opts = BitmapFactory.Options().apply {
-            inSampleSize = s
-            if (opaque) inPreferredConfig = Bitmap.Config.RGB_565
-        }
+        val opts = BitmapFactory.Options()
+        opts.inSampleSize = s
+        if (opaque) opts.inPreferredConfig = Bitmap.Config.RGB_565
         val img = BitmapFactory.decodeFile(f.path, opts)?.asImageBitmap()
         if (img != null) cache.put(key, img)
         return img
@@ -459,7 +458,6 @@ fun LauncherScreen() {
         HorizontalPager(
             state = pager,
             modifier = Modifier.fillMaxSize(),
-            beyondViewportPageCount = 1,
             flingBehavior = PagerDefaults.flingBehavior(
                 state = pager,
                 pagerSnapDistance = PagerSnapDistance.atMost(3)
