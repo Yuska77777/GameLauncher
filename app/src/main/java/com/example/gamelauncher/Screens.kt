@@ -16,8 +16,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Typeface
 import android.media.MediaPlayer
-import org.json.JSONArray
-import org.json.JSONObject
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -327,7 +325,6 @@ fun TileRow(
     }
 }
 
-@Composable
 fun launchLauncherItem(ctx: Context, item: AppItem, prefs: SharedPreferences) {
     if (item.pkg.startsWith("shortcut:")) {
         val url = Uri.decode(item.pkg.removePrefix("shortcut:"))
@@ -358,10 +355,7 @@ fun LauncherScreen() {
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var backgroundMusicUri by rememberSaveable { mutableStateOf(prefs.getString("background_music_uri", null)) }
     var customSoundUri by rememberSaveable { mutableStateOf(prefs.getString("navigation_sound_uri", null)) }
-    var shortcutName by rememberSaveable { mutableStateOf("") }
-    var shortcutUrl by rememberSaveable { mutableStateOf("") }
-    var showAddShortcut by rememberSaveable { mutableStateOf(false) }
-    var shortcutError by rememberSaveable { mutableStateOf<String?>(null) }
+    var showAppPicker by rememberSaveable { mutableStateOf(false) }
     var navigationSounds by rememberSaveable { mutableStateOf(prefs.getBoolean("navigation_sounds", true)) }
     var animationSpeed by rememberSaveable { mutableFloatStateOf(prefs.getFloat("animation_speed", 1f)) }
     SideEffect { animationSpeedScale.floatValue = animationSpeed }
@@ -410,24 +404,12 @@ fun LauncherScreen() {
 
     LaunchedEffect(Unit) {
         val installed = withContext(Dispatchers.Default) { loadApps(ctx) }
-        val shortcutArray = try { JSONArray(prefs.getString("custom_shortcuts", "[]")) } catch (_: Exception) { JSONArray() }
-        val shortcutItems = buildList {
-            for (i in 0 until shortcutArray.length()) {
-                val item = shortcutArray.optJSONObject(i) ?: continue
-                val label = item.optString("label").trim()
-                val url = item.optString("url").trim()
-                if (label.isNotEmpty() && url.isNotEmpty() && installed.isNotEmpty()) {
-                    add(AppItem(label, "shortcut:" + Uri.encode(url), installed.first().icon, true, 0xFF6EA8FF.toInt()))
-                }
-            }
-        }
-        val list = installed + shortcutItems
-        apps = list
+        apps = installed
         if (!prefs.contains("carousel")) {
-            prefs.edit().putStringSet("carousel", list.filter { it.isGame }.map { it.pkg }.toSet()).apply()
+            prefs.edit().putStringSet("carousel", installed.filter { it.isGame }.map { it.pkg }.toSet()).apply()
         }
         carousel = (prefs.getStringSet("carousel", emptySet()) ?: emptySet()).toSet()
-        rank = list.sortedByDescending { prefs.getLong("t_${it.pkg}", 0L) }
+        rank = installed.sortedByDescending { prefs.getLong("t_${it.pkg}", 0L) }
             .mapIndexed { i, a -> a.pkg to i }.toMap()
     }
 
@@ -556,8 +538,8 @@ fun LauncherScreen() {
                     if (!backgroundMusicUri.isNullOrBlank()) TextButton(onClick = { backgroundMusicUri = null; prefs.edit().remove("background_music_uri").apply() }) { Text("Выключить фоновую музыку") }
                     Divider(color = Color.White.copy(alpha = 0.15f))
                     Text("Ярлыки", color = Color.White)
-                    OutlinedButton(onClick = { showAddShortcut = true; showSettings = false }, modifier = Modifier.fillMaxWidth()) { Text("Добавить ярлык сайта") }
-                    Text("Ярлык появится в карусели и откроет адрес в браузере.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
+                    OutlinedButton(onClick = { showAppPicker = true; showSettings = false }, modifier = Modifier.fillMaxWidth()) { Text("Добавить ярлык приложения или игры") }
+                    Text("Выбери установленное приложение — оно появится в карусели и будет запускаться напрямую.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
                 }
             },
             confirmButton = { TextButton(onClick = { prefs.edit().putFloat("animation_speed", animationSpeed).apply(); showSettings = false }) { Text("Готово") } }
@@ -565,44 +547,40 @@ fun LauncherScreen() {
     }
 
 
-    if (showAddShortcut) {
+    if (showAppPicker) {
+        val availableApps = apps.filter { it.pkg !in carousel }
         AlertDialog(
-            onDismissRequest = { showAddShortcut = false; shortcutError = null },
+            onDismissRequest = { showAppPicker = false },
             shape = RoundedCornerShape(28.dp),
             containerColor = Color(0xE61B1F2A),
-            title = { Text("Новый ярлык", fontFamily = Light) },
+            title = { Text("Добавить приложение", fontFamily = Light) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(value = shortcutName, onValueChange = { shortcutName = it; shortcutError = null }, label = { Text("Название") }, singleLine = true)
-                    OutlinedTextField(value = shortcutUrl, onValueChange = { shortcutUrl = it; shortcutError = null }, label = { Text("Адрес сайта") }, singleLine = true)
-                    if (shortcutError != null) Text(shortcutError!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                if (availableApps.isEmpty()) {
+                    Text("Все найденные приложения уже добавлены в карусель.", color = Color.White)
+                } else {
+                    Column(
+                        Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        availableApps.forEach { app ->
+                            Row(
+                                Modifier.fillMaxWidth().clickable {
+                                    carousel = carousel + app.pkg
+                                    prefs.edit().putStringSet("carousel", carousel).apply()
+                                    showAppPicker = false
+                                }.padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Image(app.icon, app.label, Modifier.size(42.dp).clip(RoundedCornerShape(10.dp)))
+                                Spacer(Modifier.width(12.dp))
+                                Text(app.label, color = Color.White, modifier = Modifier.weight(1f))
+                                Text("+", color = Color(0xFF8DB8FF), fontSize = 22.sp)
+                            }
+                        }
+                    }
                 }
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    val raw = shortcutUrl.trim()
-                    val normalized = if (raw.startsWith("https://") || raw.startsWith("http://")) raw else "https://$raw"
-                    val parsed = Uri.parse(normalized)
-                    if (shortcutName.isBlank() || parsed.host.isNullOrBlank()) {
-                        shortcutError = "Укажи название и корректный адрес сайта."
-                    } else if (apps.isEmpty()) {
-                        shortcutError = "Подожди, пока загрузится список приложений."
-                    } else {
-                        val arr = try { JSONArray(prefs.getString("custom_shortcuts", "[]")) } catch (_: Exception) { JSONArray() }
-                        arr.put(JSONObject().put("label", shortcutName.trim()).put("url", normalized))
-                        prefs.edit().putString("custom_shortcuts", arr.toString()).apply()
-                        val item = AppItem(shortcutName.trim(), "shortcut:" + Uri.encode(normalized), apps.first().icon, true, 0xFF6EA8FF.toInt())
-                        apps = apps.filterNot { it.pkg == item.pkg } + item
-                        carousel = carousel + item.pkg
-                        prefs.edit().putStringSet("carousel", carousel).apply()
-                        shortcutName = ""
-                        shortcutUrl = ""
-                        shortcutError = null
-                        showAddShortcut = false
-                    }
-                }) { Text("Добавить") }
-            },
-            dismissButton = { TextButton(onClick = { showAddShortcut = false; shortcutError = null }) { Text("Отмена") } }
+            confirmButton = { TextButton(onClick = { showAppPicker = false }) { Text("Готово") } }
         )
     }
 
