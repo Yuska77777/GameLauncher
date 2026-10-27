@@ -1,4 +1,7 @@
-@file:OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
+@file:OptIn(
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
+    androidx.compose.material3.ExperimentalMaterial3Api::class
+)
 
 package com.example.gamelauncher
 
@@ -7,13 +10,13 @@ import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.ApplicationInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
-import android.os.Process
 import android.provider.Settings
 import android.util.LruCache
 import androidx.activity.ComponentActivity
@@ -26,7 +29,6 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -51,7 +53,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -82,7 +83,7 @@ val Light = FontFamily(Typeface.create("sans-serif-light", Typeface.NORMAL))
 val Medium = FontFamily(Typeface.create("sans-serif-medium", Typeface.NORMAL))
 val Soft = Shadow(Color.Black.copy(alpha = 0.55f), blurRadius = 14f)
 
-var resumeTick by mutableIntStateOf(0)
+val resumeTick = mutableIntStateOf(0)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -109,7 +110,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        resumeTick++
+        resumeTick.intValue = resumeTick.intValue + 1
     }
 }
 
@@ -159,47 +160,53 @@ fun loadApps(ctx: Context): List<AppItem> {
 
 fun hasUsageAccess(ctx: Context): Boolean {
     val ops = ctx.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-    val mode = ops.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), ctx.packageName)
+    val mode = ops.checkOpNoThrow(
+        AppOpsManager.OPSTR_GET_USAGE_STATS,
+        android.os.Process.myUid(),
+        ctx.packageName
+    )
     return mode == AppOpsManager.MODE_ALLOWED
 }
 
-fun syncPlaytime(ctx: Context, prefs: android.content.SharedPreferences, pkgs: Set<String>) {
+fun syncPlaytime(ctx: Context, prefs: SharedPreferences, pkgs: Set<String>) {
     val usm = ctx.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
     val now = System.currentTimeMillis()
-    val last = prefs.getLong("sync", now - 7L * 24 * 3600 * 1000)
+    val last = prefs.getLong("sync", now - 7L * 24L * 3600L * 1000L)
     val events = usm.queryEvents(last, now)
-    val e = UsageEvents.Event()
+    val ev = UsageEvents.Event()
     val depth = HashMap<String, Int>()
-    val start = HashMap<String, Long>()
-    val add = HashMap<String, Long>()
+    val startAt = HashMap<String, Long>()
+    val total = HashMap<String, Long>()
     while (events.hasNextEvent()) {
-        events.getNextEvent(e)
-        val p = e.packageName
-        if (p !in pkgs) continue
-        if (e.eventType == 1) {
-            val d = depth[p] ?: 0
-            if (d == 0) start[p] = e.timeStamp
+        events.getNextEvent(ev)
+        val p: String = ev.packageName ?: ""
+        if (!pkgs.contains(p)) continue
+        val d: Int = depth[p] ?: 0
+        if (ev.eventType == UsageEvents.Event.ACTIVITY_RESUMED) {
+            if (d == 0) startAt[p] = ev.timeStamp
             depth[p] = d + 1
-        } else if (e.eventType == 2) {
-            val d = depth[p] ?: 0
+        } else if (ev.eventType == UsageEvents.Event.ACTIVITY_PAUSED) {
             if (d > 0) {
                 depth[p] = d - 1
-                if (d - 1 == 0) {
-                    val s = start[p] ?: continue
-                    if (e.timeStamp > s) add[p] = (add[p] ?: 0L) + (e.timeStamp - s)
+                val s: Long? = startAt[p]
+                if (d == 1 && s != null && ev.timeStamp > s) {
+                    total[p] = (total[p] ?: 0L) + (ev.timeStamp - s)
                 }
             }
         }
     }
     val ed = prefs.edit()
-    for ((p, v) in add) ed.putLong("ms_$p", prefs.getLong("ms_$p", 0L) + v)
-    ed.putLong("sync", now).apply()
+    for (entry in total.entries) {
+        ed.putLong("ms_" + entry.key, prefs.getLong("ms_" + entry.key, 0L) + entry.value)
+    }
+    ed.putLong("sync", now)
+    ed.apply()
 }
 
 fun fmtTime(ms: Long): String {
-    val m = ms / 60000
-    val h = m / 60
-    return if (h > 0) "$h ч ${m % 60} мин" else "$m мин"
+    val m = ms / 60000L
+    val h = m / 60L
+    return if (h > 0L) "$h ч ${m % 60L} мин" else "$m мин"
 }
 
 class ImageStore(private val ctx: Context) {
@@ -229,7 +236,8 @@ class ImageStore(private val ctx: Context) {
     }
 
     fun load(key: String, maxSize: Int, opaque: Boolean): ImageBitmap? {
-        cache.get(key)?.let { return it }
+        val hit = cache.get(key)
+        if (hit != null) return hit
         val f = file(key)
         if (!f.exists()) return null
         val o = BitmapFactory.Options()
@@ -240,8 +248,9 @@ class ImageStore(private val ctx: Context) {
         val opts = BitmapFactory.Options()
         opts.inSampleSize = s
         if (opaque) opts.inPreferredConfig = Bitmap.Config.RGB_565
-        val img = BitmapFactory.decodeFile(f.path, opts)?.asImageBitmap()
-        if (img != null) cache.put(key, img)
+        val bmp = BitmapFactory.decodeFile(f.path, opts) ?: return null
+        val img = bmp.asImageBitmap()
+        cache.put(key, img)
         return img
     }
 }
@@ -391,8 +400,8 @@ fun LibraryScreen(
     val list = if (showAll) apps else apps.filter { it.pkg in carousel }
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0B1B3A), Color(0xFF05070F)))))
-        FadeImage(bg, null, Modifier.fillMaxSize().blur(18.dp), ContentScale.Crop)
-        Box(Modifier.fillMaxSize().background(Color(0xA6000000)))
+        FadeImage(bg, null, Modifier.fillMaxSize(), ContentScale.Crop)
+        Box(Modifier.fillMaxSize().background(Color(0xB3000000)))
         Column(
             Modifier.fillMaxSize().statusBarsPadding()
                 .padding(horizontal = 18.dp).padding(top = 120.dp)
@@ -422,7 +431,7 @@ fun LibraryScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.navigationBarsPadding()
             ) {
-                items(list, key = { it.pkg }, contentType = { 0 }) { app ->
+                items(list, key = { it.pkg }) { app ->
                     val custom = rememberImage(store, "icon_${app.pkg}", 256)
                     val src = remember { MutableInteractionSource() }
                     val pressed by src.collectIsPressedAsState()
@@ -475,21 +484,19 @@ fun TileRow(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        items(count = games.size + 1, key = { if (it < games.size) games[it].pkg else "library" }) { i ->
+        items(count = games.size + 1) { i ->
             val selected = i == current
-            val size by animateDpAsState(if (selected) 80.dp else 62.dp, tween(250), label = "tile")
+            val tileSize by animateDpAsState(if (selected) 80.dp else 62.dp, tween(250), label = "tile")
             val shape = RoundedCornerShape(22.dp)
             if (i < games.size) {
                 val app = games[i]
                 val custom = rememberImage(store, "icon_${app.pkg}", 256)
                 Box(
-                    Modifier.size(size)
+                    Modifier.size(tileSize)
                         .clip(shape)
-                        .border(if (selected) 2.dp else 1.dp, Color.White.copy(alpha = if (selected) 0.95f else 0.3f), shape)
-                        .combinedClickable(onClick = { onSelect(i) }, onLongClick = { onEdit(app) })
-                ) {
-                    Image(
-                        custom ?: app.icon, app.label,
-                        Modifier.fillMaxSize(), contentScale = ContentScale.Crop
-                    )
-                
+                        .border(
+                            if (selected) 2.dp else 1.dp,
+                            Color.White.copy(alpha = if (selected) 0.95f else 0.3f),
+                            shape
+                        )
+                        .combinedClickable(onClick = { onSelect(i) }, onL
