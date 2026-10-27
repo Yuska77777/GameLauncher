@@ -86,12 +86,26 @@ val Soft = Shadow(Color.Black.copy(alpha = 0.55f), blurRadius = 14f)
 val resumeTick = mutableIntStateOf(0)
 val animationSpeedScale = androidx.compose.runtime.mutableFloatStateOf(1f)
 
-fun playNavigationSound(ctx: Context, enabled: Boolean) {
+fun playNavigationSound(ctx: Context, enabled: Boolean, customUri: String? = null) {
     if (!enabled) return
+    if (!customUri.isNullOrBlank()) {
+        try {
+            val player = android.media.MediaPlayer.create(ctx, Uri.parse(customUri))
+            if (player != null) {
+                player.setVolume(0.55f, 0.55f)
+                player.setOnCompletionListener { it.release() }
+                player.setOnErrorListener { mp, _, _ -> mp.release(); true }
+                player.start()
+                return
+            }
+        } catch (_: Exception) {
+            // Fall back to the built-in sound if the selected file is unavailable.
+        }
+    }
     try {
-        val tone = android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC, 35)
-        tone.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 45)
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ tone.release() }, 100)
+        val tone = android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC, 28)
+        tone.startTone(android.media.ToneGenerator.TONE_PROP_ACK, 75)
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ tone.release() }, 120)
     } catch (_: Exception) {
         // Audio feedback is optional.
     }
