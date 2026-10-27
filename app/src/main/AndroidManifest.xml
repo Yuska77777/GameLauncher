@@ -11,6 +11,7 @@
         </intent>
     </queries>
     <application
+        android:icon="@mipmap/ic_launcher"
         android:label="Game Launcher"
         android:theme="@style/Theme.GameLauncher">
         <activity
