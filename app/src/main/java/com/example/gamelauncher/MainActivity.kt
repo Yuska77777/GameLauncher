@@ -84,6 +84,18 @@ val Medium = FontFamily(Typeface.create("sans-serif-medium", Typeface.NORMAL))
 val Soft = Shadow(Color.Black.copy(alpha = 0.55f), blurRadius = 14f)
 
 val resumeTick = mutableIntStateOf(0)
+val animationSpeedScale = androidx.compose.runtime.mutableFloatStateOf(1f)
+
+fun playNavigationSound(ctx: Context, enabled: Boolean) {
+    if (!enabled) return
+    try {
+        val tone = android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC, 35)
+        tone.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 45)
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ tone.release() }, 100)
+    } catch (_: Exception) {
+        // Audio feedback is optional.
+    }
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
