@@ -386,8 +386,10 @@ fun LauncherScreen() {
         prefs.getString("music_${games[pager.currentPage].pkg}", null)
     } else null
 
-    DisposableEffect(activeMusicUri) {
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(activeMusicUri, lifecycleOwner) {
         var player: MediaPlayer? = null
+        var wasPlayingBeforeBackground = false
         if (!activeMusicUri.isNullOrBlank()) {
             try {
                 player = MediaPlayer.create(ctx, Uri.parse(activeMusicUri))
@@ -395,13 +397,34 @@ fun LauncherScreen() {
                 player?.isLooping = true
                 player?.start()
             } catch (_: Exception) {
-                player?.release()
+                try { player?.release() } catch (_: Exception) { }
                 player = null
             }
         }
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_STOP -> {
+                    val activePlayer = player
+                    if (activePlayer != null) {
+                        wasPlayingBeforeBackground = try { activePlayer.isPlaying } catch (_: Exception) { false }
+                        try { if (activePlayer.isPlaying) activePlayer.pause() } catch (_: Exception) { }
+                    }
+                }
+                androidx.lifecycle.Lifecycle.Event.ON_START -> {
+                    if (wasPlayingBeforeBackground) {
+                        try { player?.start() } catch (_: Exception) { }
+                    }
+                    wasPlayingBeforeBackground = false
+                }
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
             try { player?.stop() } catch (_: Exception) { }
-            player?.release()
+            try { player?.release() } catch (_: Exception) { }
+            player = null
         }
     }
 
