@@ -398,7 +398,7 @@ fun LauncherScreen() {
                         store = store,
                         playMs = playtime[app.pkg] ?: 0L,
                         hasUsage = hasUsage,
-                        active = pager.currentPage == page,
+                        active = pager.currentPage == page && !pager.isScrollInProgress,
                         offset = off,
                         onPlay = {
                             ctx.packageManager.getLaunchIntentForPackage(app.pkg)?.let {
