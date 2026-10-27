@@ -386,10 +386,14 @@ fun LauncherScreen() {
         prefs.getString("music_${games[pager.currentPage].pkg}", null)
     } else null
 
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    var lifecycleContext: android.content.Context = ctx
+    while (lifecycleContext is android.content.ContextWrapper && lifecycleContext !is android.app.Activity) {
+        lifecycleContext = lifecycleContext.baseContext
+    }
+    val lifecycleOwner = lifecycleContext as? androidx.lifecycle.LifecycleOwner
     DisposableEffect(activeMusicUri, lifecycleOwner) {
         var player: MediaPlayer? = null
-        var isForeground = lifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+        var isForeground = lifecycleOwner?.lifecycle?.currentState?.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) ?: true
         var isPrepared = false
         var shouldPlay = true
         if (!activeMusicUri.isNullOrBlank()) {
@@ -437,9 +441,9 @@ fun LauncherScreen() {
                 else -> Unit
             }
         }
-        lifecycleOwner.lifecycle.addObserver(observer)
+        lifecycleOwner?.lifecycle?.addObserver(observer)
         onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
+            lifecycleOwner?.lifecycle?.removeObserver(observer)
             try { player?.setOnPreparedListener(null) } catch (_: Exception) { }
             try { player?.stop() } catch (_: Exception) { }
             try { player?.release() } catch (_: Exception) { }
