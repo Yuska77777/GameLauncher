@@ -6,6 +6,9 @@
 package com.example.gamelauncher
 
 import android.app.AppOpsManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
@@ -86,7 +89,11 @@ val Soft = Shadow(Color.Black.copy(alpha = 0.55f), blurRadius = 14f)
 val resumeTick = mutableIntStateOf(0)
 
 class MainActivity : ComponentActivity() {
+    private lateinit var audioManager: AudioManager
+    private var launcherAudioFocus: AudioFocusRequest? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
@@ -110,7 +117,27 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Request audio focus while the launcher is visible. Games that respect
+        // Android audio focus should pause their music when returning to this screen.
+        if (launcherAudioFocus == null) {
+            launcherAudioFocus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_GAME)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                .setOnAudioFocusChangeListener { }
+                .build()
+        }
+        audioManager.requestAudioFocus(launcherAudioFocus!!)
         resumeTick.intValue = resumeTick.intValue + 1
+    }
+
+    override fun onPause() {
+        // Release focus so the game can own it when it launches.
+        launcherAudioFocus?.let { audioManager.abandonAudioFocusRequest(it) }
+        super.onPause()
     }
 }
 
