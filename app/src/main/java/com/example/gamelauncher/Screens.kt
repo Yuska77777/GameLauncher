@@ -241,7 +241,7 @@ fun LibraryScreen(
                     val custom = rememberImage(store, "icon_${app.pkg}", 256)
                     val src = remember { MutableInteractionSource() }
                     val pressed by src.collectIsPressedAsState()
-                    val sc by animateFloatAsState(if (pressed) 0.92f else 1f, tween(120), label = "press")
+                    val sc by animateFloatAsState(if (pressed) 0.92f else 1f, tween((120 / animationSpeedScale.floatValue).toInt().coerceAtLeast(1)), label = "press")
                     Column(
                         Modifier
                             .graphicsLayer { scaleX = sc; scaleY = sc }
@@ -292,7 +292,7 @@ fun TileRow(
     ) {
         items(count = games.size + 1) { i ->
             val selected = i == current
-            val tileSize by animateDpAsState(if (selected) 80.dp else 62.dp, tween(250), label = "tile")
+            val tileSize by animateDpAsState(if (selected) 80.dp else 62.dp, tween((250 / animationSpeedScale.floatValue).toInt().coerceAtLeast(1)), label = "tile")
             val shape = RoundedCornerShape(22.dp)
             if (i < games.size) {
                 val app = games[i]
@@ -335,6 +335,10 @@ fun LauncherScreen() {
     var hasUsage by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<AppItem?>(null) }
     var pickKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+    var navigationSounds by rememberSaveable { mutableStateOf(prefs.getBoolean("navigation_sounds", true)) }
+    var animationSpeed by rememberSaveable { mutableFloatStateOf(prefs.getFloat("animation_speed", 1f)) }
+    SideEffect { animationSpeedScale.floatValue = animationSpeed }
     val tick = resumeTick.intValue
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -438,9 +442,47 @@ fun LauncherScreen() {
             games = games,
             current = pager.currentPage,
             store = store,
-            onSelect = { i -> scope.launch { pager.animateScrollToPage(i) } },
+            onSelect = { i ->
+                playNavigationSound(ctx, navigationSounds)
+                scope.launch { pager.animateScrollToPage(i) }
+            },
             onEdit = { a -> editing = a },
-            modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp)
+            modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp, end = 58.dp)
+        )
+        Box(
+            Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 12.dp, end = 12.dp)
+                .size(42.dp).glass(CircleShape).clickable { showSettings = true },
+            contentAlignment = Alignment.Center
+        ) {
+            Text("⚙", color = Color.White, fontSize = 20.sp)
+        }
+    }
+
+    if (showSettings) {
+        AlertDialog(
+            onDismissRequest = { showSettings = false },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = Color(0xE61B1F2A),
+            title = { Text("Настройки лаунчера", fontFamily = Light) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text("Скорость анимаций", color = Color.White)
+                    Text(when { animationSpeed < 0.8f -> "Медленно"; animationSpeed > 1.2f -> "Быстро"; else -> "Обычно" }, color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                    Slider(value = animationSpeed, onValueChange = { animationSpeed = it; animationSpeedScale.floatValue = it }, valueRange = 0.5f..1.8f, steps = 4)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Звуки навигации", color = Color.White)
+                            Text("Короткий звук при выборе плитки", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
+                        }
+                        Switch(checked = navigationSounds, onCheckedChange = {
+                            navigationSounds = it
+                            prefs.edit().putBoolean("navigation_sounds", it).apply()
+                            if (it) playNavigationSound(ctx, true)
+                        })
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { prefs.edit().putFloat("animation_speed", animationSpeed).apply(); showSettings = false }) { Text("Готово") } }
         )
     }
 
