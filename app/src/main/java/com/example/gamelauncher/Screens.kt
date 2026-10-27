@@ -15,6 +15,9 @@ import android.content.pm.ApplicationInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Typeface
+import android.media.MediaPlayer
+import org.json.JSONArray
+import org.json.JSONObject
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -37,6 +40,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -351,6 +356,12 @@ fun LauncherScreen() {
     var editing by remember { mutableStateOf<AppItem?>(null) }
     var pickKey by rememberSaveable { mutableStateOf<String?>(null) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    var backgroundMusicUri by rememberSaveable { mutableStateOf(prefs.getString("background_music_uri", null)) }
+    var customSoundUri by rememberSaveable { mutableStateOf(prefs.getString("navigation_sound_uri", null)) }
+    var shortcutName by rememberSaveable { mutableStateOf("") }
+    var shortcutUrl by rememberSaveable { mutableStateOf("") }
+    var showAddShortcut by rememberSaveable { mutableStateOf(false) }
+    var shortcutError by rememberSaveable { mutableStateOf<String?>(null) }
     var navigationSounds by rememberSaveable { mutableStateOf(prefs.getBoolean("navigation_sounds", true)) }
     var animationSpeed by rememberSaveable { mutableFloatStateOf(prefs.getFloat("animation_speed", 1f)) }
     SideEffect { animationSpeedScale.floatValue = animationSpeed }
@@ -361,9 +372,56 @@ fun LauncherScreen() {
         if (uri != null && k != null) store.save(k, uri)
         pickKey = null
     }
+    val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            try { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) { }
+            when (pickKey) {
+                "background_music" -> {
+                    backgroundMusicUri = uri.toString()
+                    prefs.edit().putString("background_music_uri", backgroundMusicUri).apply()
+                }
+                "navigation_sound" -> {
+                    customSoundUri = uri.toString()
+                    prefs.edit().putString("navigation_sound_uri", customSoundUri).apply()
+                }
+            }
+        }
+        pickKey = null
+    }
+
+    DisposableEffect(backgroundMusicUri) {
+        var player: MediaPlayer? = null
+        if (!backgroundMusicUri.isNullOrBlank()) {
+            try {
+                player = MediaPlayer().apply {
+                    setDataSource(ctx, Uri.parse(backgroundMusicUri))
+                    isLooping = true
+                    setVolume(0.22f, 0.22f)
+                    setOnPreparedListener { it.start() }
+                    prepareAsync()
+                }
+            } catch (_: Exception) { player?.release(); player = null }
+        }
+        onDispose {
+            try { player?.stop() } catch (_: Exception) { }
+            player?.release()
+        }
+    }
 
     LaunchedEffect(Unit) {
-        val list = withContext(Dispatchers.Default) { loadApps(ctx) }
+        val installed = withContext(Dispatchers.Default) { loadApps(ctx) }
+        val shortcutArray = try { JSONArray(prefs.getString("custom_shortcuts", "[]")) } catch (_: Exception) { JSONArray() }
+        val shortcutItems = buildList {
+            for (i in 0 until shortcutArray.length()) {
+                val item = shortcutArray.optJSONObject(i) ?: continue
+                val label = item.optString("label").trim()
+                val url = item.optString("url").trim()
+                if (label.isNotEmpty() && url.isNotEmpty() && installed.isNotEmpty()) {
+                    add(AppItem(label, "shortcut:" + Uri.encode(url), installed.first().icon, true, 0xFF6EA8FF.toInt()))
+                }
+            }
+        }
+        val list = installed + shortcutItems
         apps = list
         if (!prefs.contains("carousel")) {
             prefs.edit().putStringSet("carousel", list.filter { it.isGame }.map { it.pkg }.toSet()).apply()
@@ -420,10 +478,7 @@ fun LauncherScreen() {
                         active = pager.currentPage == page,
                         offset = off,
                         onPlay = {
-                            ctx.packageManager.getLaunchIntentForPackage(app.pkg)?.let {
-                                prefs.edit().putLong("t_${app.pkg}", System.currentTimeMillis()).apply()
-                                ctx.startActivity(it)
-                            }
+                            launchLauncherItem(ctx, app, prefs)
                         },
                         onEdit = { editing = app },
                         onUsage = {
@@ -438,10 +493,7 @@ fun LauncherScreen() {
                         carousel = carousel,
                         store = store,
                         onLaunch = { a ->
-                            ctx.packageManager.getLaunchIntentForPackage(a.pkg)?.let {
-                                prefs.edit().putLong("t_${a.pkg}", System.currentTimeMillis()).apply()
-                                ctx.startActivity(it)
-                            }
+                            launchLauncherItem(ctx, a, prefs)
                         },
                         onEdit = { a -> editing = a },
                         onPickBg = {
@@ -458,7 +510,7 @@ fun LauncherScreen() {
             current = pager.currentPage,
             store = store,
             onSelect = { i ->
-                playNavigationSound(ctx, navigationSounds)
+                playNavigationSound(ctx, navigationSounds, customSoundUri)
                 scope.launch { pager.animateScrollToPage(i) }
             },
             onEdit = { a -> editing = a },
@@ -480,24 +532,77 @@ fun LauncherScreen() {
             containerColor = Color(0xE61B1F2A),
             title = { Text("Настройки лаунчера", fontFamily = Light) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Column(Modifier.heightIn(max = 430.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Скорость анимаций", color = Color.White)
                     Text(when { animationSpeed < 0.8f -> "Медленно"; animationSpeed > 1.2f -> "Быстро"; else -> "Обычно" }, color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
                     Slider(value = animationSpeed, onValueChange = { animationSpeed = it; animationSpeedScale.floatValue = it }, valueRange = 0.5f..1.8f, steps = 4)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text("Звуки навигации", color = Color.White)
-                            Text("Короткий звук при выборе плитки", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
+                            Text("Звук переключения", color = Color.White)
+                            Text(if (customSoundUri.isNullOrBlank()) "Мягкий системный звук" else "Свой звук выбран", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
                         }
                         Switch(checked = navigationSounds, onCheckedChange = {
                             navigationSounds = it
                             prefs.edit().putBoolean("navigation_sounds", it).apply()
-                            if (it) playNavigationSound(ctx, true)
+                            if (it) playNavigationSound(ctx, true, customSoundUri)
                         })
                     }
+                    OutlinedButton(onClick = { pickKey = "navigation_sound"; audioPicker.launch(arrayOf("audio/mpeg", "audio/*")) }, modifier = Modifier.fillMaxWidth()) { Text("Импортировать звук переключения (MP3)") }
+                    if (!customSoundUri.isNullOrBlank()) TextButton(onClick = { customSoundUri = null; prefs.edit().remove("navigation_sound_uri").apply() }) { Text("Сбросить свой звук") }
+                    Divider(color = Color.White.copy(alpha = 0.15f))
+                    Text("Фоновая музыка", color = Color.White)
+                    Text(if (backgroundMusicUri.isNullOrBlank()) "Музыка не выбрана" else "Трек выбран — будет повторяться", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
+                    OutlinedButton(onClick = { pickKey = "background_music"; audioPicker.launch(arrayOf("audio/mpeg", "audio/*")) }, modifier = Modifier.fillMaxWidth()) { Text("Выбрать MP3 с телефона") }
+                    if (!backgroundMusicUri.isNullOrBlank()) TextButton(onClick = { backgroundMusicUri = null; prefs.edit().remove("background_music_uri").apply() }) { Text("Выключить фоновую музыку") }
+                    Divider(color = Color.White.copy(alpha = 0.15f))
+                    Text("Ярлыки", color = Color.White)
+                    OutlinedButton(onClick = { showAddShortcut = true; showSettings = false }, modifier = Modifier.fillMaxWidth()) { Text("Добавить ярлык сайта") }
+                    Text("Ярлык появится в карусели и откроет адрес в браузере.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
                 }
             },
             confirmButton = { TextButton(onClick = { prefs.edit().putFloat("animation_speed", animationSpeed).apply(); showSettings = false }) { Text("Готово") } }
+        )
+    }
+
+
+    if (showAddShortcut) {
+        AlertDialog(
+            onDismissRequest = { showAddShortcut = false; shortcutError = null },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = Color(0xE61B1F2A),
+            title = { Text("Новый ярлык", fontFamily = Light) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(value = shortcutName, onValueChange = { shortcutName = it; shortcutError = null }, label = { Text("Название") }, singleLine = true)
+                    OutlinedTextField(value = shortcutUrl, onValueChange = { shortcutUrl = it; shortcutError = null }, label = { Text("Адрес сайта") }, singleLine = true)
+                    if (shortcutError != null) Text(shortcutError!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val raw = shortcutUrl.trim()
+                    val normalized = if (raw.startsWith("https://") || raw.startsWith("http://")) raw else "https://$raw"
+                    val parsed = Uri.parse(normalized)
+                    if (shortcutName.isBlank() || parsed.host.isNullOrBlank()) {
+                        shortcutError = "Укажи название и корректный адрес сайта."
+                    } else if (apps.isEmpty()) {
+                        shortcutError = "Подожди, пока загрузится список приложений."
+                    } else {
+                        val arr = try { JSONArray(prefs.getString("custom_shortcuts", "[]")) } catch (_: Exception) { JSONArray() }
+                        arr.put(JSONObject().put("label", shortcutName.trim()).put("url", normalized))
+                        prefs.edit().putString("custom_shortcuts", arr.toString()).apply()
+                        val item = AppItem(shortcutName.trim(), "shortcut:" + Uri.encode(normalized), apps.first().icon, true, 0xFF6EA8FF.toInt())
+                        apps = apps.filterNot { it.pkg == item.pkg } + item
+                        carousel = carousel + item.pkg
+                        prefs.edit().putStringSet("carousel", carousel).apply()
+                        shortcutName = ""
+                        shortcutUrl = ""
+                        shortcutError = null
+                        showAddShortcut = false
+                    }
+                }) { Text("Добавить") }
+            },
+            dismissButton = { TextButton(onClick = { showAddShortcut = false; shortcutError = null }) { Text("Отмена") } }
         )
     }
 
