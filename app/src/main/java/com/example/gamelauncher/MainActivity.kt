@@ -1,5 +1,10 @@
+@file:OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
+
 package com.example.gamelauncher
 
+import android.app.AppOpsManager
+import android.app.usage.UsageEvents
+import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -8,6 +13,8 @@ import android.graphics.BitmapFactory
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
+import android.os.Process
+import android.provider.Settings
 import android.util.LruCache
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -22,14 +29,17 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.PagerSnapDistance
@@ -41,11 +51,13 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -59,18 +71,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.min
 
 val Light = FontFamily(Typeface.create("sans-serif-light", Typeface.NORMAL))
 val Medium = FontFamily(Typeface.create("sans-serif-medium", Typeface.NORMAL))
 val Soft = Shadow(Color.Black.copy(alpha = 0.55f), blurRadius = 14f)
+
+var resumeTick by mutableIntStateOf(0)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -94,7 +106,28 @@ class MainActivity : ComponentActivity() {
             ) { LauncherScreen() }
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        resumeTick++
+    }
 }
+
+fun Modifier.glass(shape: Shape, strong: Boolean = false): Modifier = this
+    .clip(shape)
+    .background(
+        Brush.linearGradient(
+            listOf(
+                Color.White.copy(alpha = if (strong) 0.30f else 0.18f),
+                Color.White.copy(alpha = 0.06f)
+            )
+        )
+    )
+    .border(
+        1.dp,
+        Brush.linearGradient(listOf(Color.White.copy(alpha = 0.55f), Color.White.copy(alpha = 0.08f))),
+        shape
+    )
 
 data class AppItem(
     val label: String,
@@ -124,6 +157,51 @@ fun loadApps(ctx: Context): List<AppItem> {
         .sortedBy { it.label.lowercase() }
 }
 
+fun hasUsageAccess(ctx: Context): Boolean {
+    val ops = ctx.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+    val mode = ops.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), ctx.packageName)
+    return mode == AppOpsManager.MODE_ALLOWED
+}
+
+fun syncPlaytime(ctx: Context, prefs: android.content.SharedPreferences, pkgs: Set<String>) {
+    val usm = ctx.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+    val now = System.currentTimeMillis()
+    val last = prefs.getLong("sync", now - 7L * 24 * 3600 * 1000)
+    val events = usm.queryEvents(last, now)
+    val e = UsageEvents.Event()
+    val depth = HashMap<String, Int>()
+    val start = HashMap<String, Long>()
+    val add = HashMap<String, Long>()
+    while (events.hasNextEvent()) {
+        events.getNextEvent(e)
+        val p = e.packageName
+        if (p !in pkgs) continue
+        if (e.eventType == 1) {
+            val d = depth[p] ?: 0
+            if (d == 0) start[p] = e.timeStamp
+            depth[p] = d + 1
+        } else if (e.eventType == 2) {
+            val d = depth[p] ?: 0
+            if (d > 0) {
+                depth[p] = d - 1
+                if (d - 1 == 0) {
+                    val s = start[p] ?: continue
+                    if (e.timeStamp > s) add[p] = (add[p] ?: 0L) + (e.timeStamp - s)
+                }
+            }
+        }
+    }
+    val ed = prefs.edit()
+    for ((p, v) in add) ed.putLong("ms_$p", prefs.getLong("ms_$p", 0L) + v)
+    ed.putLong("sync", now).apply()
+}
+
+fun fmtTime(ms: Long): String {
+    val m = ms / 60000
+    val h = m / 60
+    return if (h > 0) "$h ч ${m % 60} мин" else "$m мин"
+}
+
 class ImageStore(private val ctx: Context) {
     var version by mutableIntStateOf(0)
         private set
@@ -150,14 +228,15 @@ class ImageStore(private val ctx: Context) {
         version++
     }
 
-    fun load(key: String, max: Int, opaque: Boolean): ImageBitmap? {
+    fun load(key: String, maxSize: Int, opaque: Boolean): ImageBitmap? {
         cache.get(key)?.let { return it }
         val f = file(key)
         if (!f.exists()) return null
-        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        val o = BitmapFactory.Options()
+        o.inJustDecodeBounds = true
         BitmapFactory.decodeFile(f.path, o)
         var s = 1
-        while (o.outWidth / (s * 2) >= max || o.outHeight / (s * 2) >= max) s *= 2
+        while (o.outWidth / (s * 2) >= maxSize || o.outHeight / (s * 2) >= maxSize) s *= 2
         val opts = BitmapFactory.Options()
         opts.inSampleSize = s
         if (opaque) opts.inPreferredConfig = Bitmap.Config.RGB_565
@@ -168,11 +247,11 @@ class ImageStore(private val ctx: Context) {
 }
 
 @Composable
-fun rememberImage(store: ImageStore, key: String, max: Int, opaque: Boolean = false): ImageBitmap? {
+fun rememberImage(store: ImageStore, key: String, maxSize: Int, opaque: Boolean = false): ImageBitmap? {
     val v = store.version
     var img by remember(key, v) { mutableStateOf(store.cached(key)) }
     LaunchedEffect(key, v) {
-        if (img == null) img = withContext(Dispatchers.IO) { store.load(key, max, opaque) }
+        if (img == null) img = withContext(Dispatchers.IO) { store.load(key, maxSize, opaque) }
     }
     return img
 }
@@ -186,47 +265,16 @@ fun FadeImage(img: ImageBitmap?, desc: String?, modifier: Modifier, scale: Conte
 }
 
 @Composable
-fun PageDots(count: Int, current: Int, modifier: Modifier) {
-    if (count > 10) {
-        Text(
-            "${current + 1} / $count", color = Color.White.copy(alpha = 0.8f),
-            fontSize = 12.sp, fontFamily = Medium, modifier = modifier
-        )
-    } else {
-        Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-            repeat(count) { i ->
-                val w by animateDpAsState(if (i == current) 22.dp else 6.dp, label = "dot")
-                Box(
-                    Modifier.width(w).height(6.dp).clip(CircleShape)
-                        .background(if (i == current) Color.White else Color.White.copy(alpha = 0.35f))
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun Clock(modifier: Modifier) {
-    val fmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
-    var t by remember { mutableStateOf(fmt.format(Date())) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            t = fmt.format(Date())
-            delay(15000)
-        }
-    }
-    Text(t, color = Color.White, style = TextStyle(fontFamily = Light, fontSize = 20.sp, shadow = Soft), modifier = modifier)
-}
-
-@Composable
 fun GamePage(
     app: AppItem,
     store: ImageStore,
-    launches: Int,
+    playMs: Long,
+    hasUsage: Boolean,
     active: Boolean,
     offset: () -> Float,
     onPlay: () -> Unit,
-    onEdit: () -> Unit
+    onEdit: () -> Unit,
+    onUsage: () -> Unit
 ) {
     val bg = rememberImage(store, "bg_${app.pkg}", 1600, true)
     val logo = rememberImage(store, "logo_${app.pkg}", 800)
@@ -258,8 +306,8 @@ fun GamePage(
         Box(
             Modifier.fillMaxSize().background(
                 Brush.verticalGradient(
-                    0f to Color(0x66000000),
-                    0.25f to Color.Transparent,
+                    0f to Color(0x80000000),
+                    0.3f to Color.Transparent,
                     0.55f to Color.Transparent,
                     1f to Color(0xD9000000)
                 )
@@ -267,18 +315,9 @@ fun GamePage(
         )
 
         Box(Modifier.fillMaxSize().graphicsLayer { translationX = offset() * size.width * 0.25f }) {
-            Clock(Modifier.align(Alignment.TopStart).statusBarsPadding().padding(start = 24.dp, top = 22.dp))
-            Box(
-                Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(end = 20.dp, top = 14.dp)
-                    .size(40.dp).clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.14f))
-                    .clickable { onEdit() },
-                contentAlignment = Alignment.Center
-            ) { Text("✎", color = Color.White, fontSize = 18.sp) }
-
             Column(
                 Modifier.align(Alignment.BottomStart).navigationBarsPadding()
-                    .padding(start = 28.dp, bottom = 96.dp, end = 130.dp)
+                    .padding(start = 28.dp, bottom = 84.dp, end = 160.dp)
             ) {
                 if (logo != null) {
                     FadeImage(
@@ -293,35 +332,50 @@ fun GamePage(
                     )
                 }
                 Spacer(Modifier.height(18.dp))
-                Button(
-                    onClick = onPlay,
-                    shape = CircleShape,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
-                    contentPadding = PaddingValues(horizontal = 28.dp, vertical = 12.dp)
-                ) {
-                    Text("Играть", fontFamily = Medium, fontSize = 16.sp, letterSpacing = 0.4.sp)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(
+                        Modifier.glass(CircleShape, true).clickable { onPlay() }
+                            .padding(horizontal = 34.dp, vertical = 14.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Играть", color = Color.White, fontFamily = Medium, fontSize = 16.sp, letterSpacing = 0.4.sp)
+                    }
+                    Box(
+                        Modifier.size(48.dp).glass(CircleShape).clickable { onEdit() },
+                        contentAlignment = Alignment.Center
+                    ) { Text("✎", color = Color.White, fontSize = 18.sp) }
                 }
             }
 
-            Column(
+            Box(
                 Modifier.align(Alignment.BottomEnd).navigationBarsPadding()
-                    .padding(end = 28.dp, bottom = 100.dp),
-                horizontalAlignment = Alignment.End
+                    .padding(end = 24.dp, bottom = 90.dp)
+                    .glass(RoundedCornerShape(22.dp))
+                    .clickable(enabled = !hasUsage) { onUsage() }
+                    .padding(horizontal = 18.dp, vertical = 12.dp)
             ) {
-                Text(
-                    "$launches", color = Color.White,
-                    style = TextStyle(fontFamily = Light, fontSize = 34.sp, shadow = Soft)
-                )
-                Text(
-                    "запусков", color = Color.White.copy(alpha = 0.7f),
-                    fontFamily = Medium, fontSize = 12.sp, letterSpacing = 1.sp
-                )
+                if (hasUsage) {
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            "ВРЕМЯ В ИГРЕ", color = Color.White.copy(alpha = 0.7f),
+                            fontFamily = Medium, fontSize = 10.sp, letterSpacing = 1.2.sp
+                        )
+                        Text(
+                            fmtTime(playMs), color = Color.White,
+                            style = TextStyle(fontFamily = Light, fontSize = 22.sp)
+                        )
+                    }
+                } else {
+                    Text(
+                        "Включить время в игре", color = Color.White,
+                        fontFamily = Medium, fontSize = 13.sp
+                    )
+                }
             }
         }
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
     apps: List<AppItem>,
@@ -337,11 +391,11 @@ fun LibraryScreen(
     val list = if (showAll) apps else apps.filter { it.pkg in carousel }
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0B1B3A), Color(0xFF05070F)))))
-        FadeImage(bg, null, Modifier.fillMaxSize(), ContentScale.Crop)
+        FadeImage(bg, null, Modifier.fillMaxSize().blur(18.dp), ContentScale.Crop)
         Box(Modifier.fillMaxSize().background(Color(0xA6000000)))
         Column(
             Modifier.fillMaxSize().statusBarsPadding()
-                .padding(horizontal = 18.dp).padding(top = 34.dp)
+                .padding(horizontal = 18.dp).padding(top = 120.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -376,8 +430,7 @@ fun LibraryScreen(
                     Column(
                         Modifier
                             .graphicsLayer { scaleX = sc; scaleY = sc }
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(Color.White.copy(alpha = 0.07f))
+                            .glass(RoundedCornerShape(22.dp))
                             .combinedClickable(
                                 interactionSource = src,
                                 indication = null,
@@ -389,7 +442,7 @@ fun LibraryScreen(
                     ) {
                         Image(
                             custom ?: app.icon, app.label,
-                            Modifier.size(60.dp).clip(RoundedCornerShape(14.dp)),
+                            Modifier.size(60.dp).clip(RoundedCornerShape(16.dp)),
                             contentScale = ContentScale.Crop
                         )
                         Spacer(Modifier.height(6.dp))
@@ -404,124 +457,39 @@ fun LibraryScreen(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun LauncherScreen() {
-    val ctx = LocalContext.current
-    val prefs = remember { ctx.getSharedPreferences("launcher", Context.MODE_PRIVATE) }
-    val store = remember { ImageStore(ctx) }
-    var apps by remember { mutableStateOf(emptyList<AppItem>()) }
-    var carousel by remember { mutableStateOf(emptySet<String>()) }
-    var rank by remember { mutableStateOf(emptyMap<String, Int>()) }
-    val launches = remember { mutableStateMapOf<String, Int>() }
-    var editing by remember { mutableStateOf<AppItem?>(null) }
-    var pickKey by rememberSaveable { mutableStateOf<String?>(null) }
-
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        val k = pickKey
-        if (uri != null && k != null) store.save(k, uri)
-        pickKey = null
-    }
-    fun pick(key: String) {
-        pickKey = key
-        picker.launch("image/*")
-    }
-
-    LaunchedEffect(Unit) {
-        val list = withContext(Dispatchers.Default) { loadApps(ctx) }
-        apps = list
-        if (!prefs.contains("carousel")) {
-            prefs.edit().putStringSet("carousel", list.filter { it.isGame }.map { it.pkg }.toSet()).apply()
-        }
-        carousel = prefs.getStringSet("carousel", emptySet())!!.toSet()
-        list.forEach { launches[it.pkg] = prefs.getInt("n_${it.pkg}", 0) }
-        rank = list.sortedByDescending { prefs.getLong("t_${it.pkg}", 0L) }
-            .mapIndexed { i, a -> a.pkg to i }.toMap()
-    }
-
-    fun play(app: AppItem) {
-        ctx.packageManager.getLaunchIntentForPackage(app.pkg)?.let {
-            val n = (launches[app.pkg] ?: 0) + 1
-            launches[app.pkg] = n
-            prefs.edit().putInt("n_${app.pkg}", n).putLong("t_${app.pkg}", System.currentTimeMillis()).apply()
-            ctx.startActivity(it)
-        }
-    }
-
-    val games = remember(apps, carousel, rank) {
-        apps.filter { it.pkg in carousel }
-            .sortedWith(compareBy<AppItem> { rank[it.pkg] ?: Int.MAX_VALUE }.thenBy { it.label.lowercase() })
-    }
-    val pager = rememberPagerState { games.size + 1 }
-
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
-        HorizontalPager(
-            state = pager,
-            modifier = Modifier.fillMaxSize(),
-            flingBehavior = PagerDefaults.flingBehavior(
-                state = pager,
-                pagerSnapDistance = PagerSnapDistance.atMost(3)
-            ),
-            key = { if (it < games.size) games[it].pkg else "library" }
-        ) { page ->
-            val off = { (page - pager.currentPage) - pager.currentPageOffsetFraction }
-            Box(
-                Modifier.fillMaxSize().graphicsLayer {
-                    val d = min(abs(off()), 1f)
-                    alpha = 1f - d * 0.7f
-                    val s = 1f - d * 0.06f
-                    scaleX = s
-                    scaleY = s
-                }
-            ) {
-                if (page < games.size) {
-                    val app = games[page]
-                    GamePage(
-                        app, store, launches[app.pkg] ?: 0,
-                        pager.currentPage == page, off,
-                        { play(app) }, { editing = app }
+fun TileRow(
+    games: List<AppItem>,
+    current: Int,
+    store: ImageStore,
+    onSelect: (Int) -> Unit,
+    onEdit: (AppItem) -> Unit,
+    modifier: Modifier
+) {
+    val state = rememberLazyListState()
+    LaunchedEffect(current) { state.animateScrollToItem(max(0, current - 2)) }
+    LazyRow(
+        state = state,
+        modifier = modifier.fillMaxWidth().height(96.dp),
+        contentPadding = PaddingValues(horizontal = 20.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        items(count = games.size + 1, key = { if (it < games.size) games[it].pkg else "library" }) { i ->
+            val selected = i == current
+            val size by animateDpAsState(if (selected) 80.dp else 62.dp, tween(250), label = "tile")
+            val shape = RoundedCornerShape(22.dp)
+            if (i < games.size) {
+                val app = games[i]
+                val custom = rememberImage(store, "icon_${app.pkg}", 256)
+                Box(
+                    Modifier.size(size)
+                        .clip(shape)
+                        .border(if (selected) 2.dp else 1.dp, Color.White.copy(alpha = if (selected) 0.95f else 0.3f), shape)
+                        .combinedClickable(onClick = { onSelect(i) }, onLongClick = { onEdit(app) })
+                ) {
+                    Image(
+                        custom ?: app.icon, app.label,
+                        Modifier.fillMaxSize(), contentScale = ContentScale.Crop
                     )
-                } else {
-                    LibraryScreen(
-                        apps, carousel, store,
-                        { play(it) }, { editing = it },
-                        { pick("libbg") }, { store.delete("libbg") }
-                    )
-                }
-            }
-        }
-        PageDots(
-            pager.pageCount, pager.currentPage,
-            Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 30.dp)
-        )
-    }
-
-    editing?.let { app ->
-        val inCarousel = app.pkg in carousel
-        AlertDialog(
-            onDismissRequest = { editing = null },
-            shape = RoundedCornerShape(24.dp),
-            title = { Text(app.label, fontFamily = Light) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton({ pick("bg_${app.pkg}") }, Modifier.fillMaxWidth()) { Text("Фон игры") }
-                    OutlinedButton({ pick("logo_${app.pkg}") }, Modifier.fillMaxWidth()) { Text("Картинка-название") }
-                    OutlinedButton({ pick("icon_${app.pkg}") }, Modifier.fillMaxWidth()) { Text("Иконка в библиотеке") }
-                    OutlinedButton(
-                        { listOf("bg", "logo", "icon").forEach { store.delete("${it}_${app.pkg}") } },
-                        Modifier.fillMaxWidth()
-                    ) { Text("Сбросить картинки") }
-                    OutlinedButton(
-                        {
-                            carousel = if (inCarousel) carousel - app.pkg else carousel + app.pkg
-                            prefs.edit().putStringSet("carousel", carousel).apply()
-                            editing = null
-                        },
-                        Modifier.fillMaxWidth()
-                    ) { Text(if (inCarousel) "Убрать из карусели" else "Добавить в карусель") }
-                }
-            },
-            confirmButton = { TextButton({ editing = null }) { Text("Готово") } }
-        )
-    }
-}
+                
