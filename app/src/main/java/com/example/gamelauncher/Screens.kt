@@ -389,13 +389,30 @@ fun LauncherScreen() {
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(activeMusicUri, lifecycleOwner) {
         var player: MediaPlayer? = null
-        var wasPlayingBeforeBackground = false
+        var isForeground = lifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+        var isPrepared = false
+        var shouldPlay = true
         if (!activeMusicUri.isNullOrBlank()) {
             try {
-                player = MediaPlayer.create(ctx, Uri.parse(activeMusicUri))
-                player?.setVolume(0.22f, 0.22f)
-                player?.isLooping = true
-                player?.start()
+                val newPlayer = MediaPlayer()
+                player = newPlayer
+                newPlayer.setAudioAttributes(
+                    android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_GAME)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                newPlayer.setDataSource(ctx, Uri.parse(activeMusicUri))
+                newPlayer.setVolume(0.22f, 0.22f)
+                newPlayer.isLooping = true
+                newPlayer.setOnPreparedListener { readyPlayer ->
+                    isPrepared = true
+                    if (isForeground && shouldPlay) {
+                        try { readyPlayer.start() } catch (_: Exception) { }
+                    }
+                }
+                newPlayer.setOnErrorListener { _, _, _ -> true }
+                newPlayer.prepareAsync()
             } catch (_: Exception) {
                 try { player?.release() } catch (_: Exception) { }
                 player = null
@@ -404,17 +421,18 @@ fun LauncherScreen() {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             when (event) {
                 androidx.lifecycle.Lifecycle.Event.ON_STOP -> {
+                    isForeground = false
                     val activePlayer = player
-                    if (activePlayer != null) {
-                        wasPlayingBeforeBackground = try { activePlayer.isPlaying } catch (_: Exception) { false }
+                    if (activePlayer != null && isPrepared) {
+                        shouldPlay = try { activePlayer.isPlaying } catch (_: Exception) { false }
                         try { if (activePlayer.isPlaying) activePlayer.pause() } catch (_: Exception) { }
                     }
                 }
                 androidx.lifecycle.Lifecycle.Event.ON_START -> {
-                    if (wasPlayingBeforeBackground) {
+                    isForeground = true
+                    if (shouldPlay && isPrepared) {
                         try { player?.start() } catch (_: Exception) { }
                     }
-                    wasPlayingBeforeBackground = false
                 }
                 else -> Unit
             }
@@ -422,6 +440,7 @@ fun LauncherScreen() {
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
+            try { player?.setOnPreparedListener(null) } catch (_: Exception) { }
             try { player?.stop() } catch (_: Exception) { }
             try { player?.release() } catch (_: Exception) { }
             player = null
