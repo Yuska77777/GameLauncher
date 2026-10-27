@@ -326,13 +326,6 @@ fun TileRow(
 }
 
 fun launchLauncherItem(ctx: Context, item: AppItem, prefs: SharedPreferences) {
-    if (item.pkg.startsWith("shortcut:")) {
-        val url = Uri.decode(item.pkg.removePrefix("shortcut:"))
-        try {
-            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        } catch (_: Exception) { }
-        return
-    }
     val intent = ctx.packageManager.getLaunchIntentForPackage(item.pkg)
     if (intent != null) {
         prefs.edit().putLong("t_${item.pkg}", System.currentTimeMillis()).apply()
@@ -340,6 +333,7 @@ fun launchLauncherItem(ctx: Context, item: AppItem, prefs: SharedPreferences) {
     }
 }
 
+@Composable
 fun LauncherScreen() {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
