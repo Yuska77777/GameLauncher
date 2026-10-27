@@ -1,6 +1,8 @@
 name: Android APK build
 
 on:
+  push:
+    branches: [feature/launcher-enhancements]
   pull_request:
     branches: [main]
   workflow_dispatch:
