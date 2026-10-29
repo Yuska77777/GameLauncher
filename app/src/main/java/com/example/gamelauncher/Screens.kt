@@ -595,27 +595,20 @@ fun LauncherScreen() {
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         isLandscape = maxWidth > maxHeight
-        if (isLandscape) {
-            Row(
-                Modifier.align(Alignment.TopStart).statusBarsPadding().padding(start = 12.dp, top = 10.dp)
-                    .glass(RoundedCornerShape(24.dp)).padding(4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                FilterChip(
-                    selected = !showRomMode,
-                    onClick = { showRomMode = false },
-                    label = { Text("Android") }
-                )
-                Spacer(Modifier.width(4.dp))
-                FilterChip(
-                    selected = showRomMode,
-                    onClick = { showRomMode = true },
-                    label = { Text("ROMы") }
-                )
-            }
-        }
         if (isLandscape && showRomMode) {
             RomsScreen(store = store, prefs = prefs, apps = apps)
+        }
+    }
+
+    if (isLandscape) {
+        Row(
+            Modifier.fillMaxSize().wrapContentSize(Alignment.TopStart).statusBarsPadding()
+                .padding(start = 12.dp, top = 10.dp).glass(RoundedCornerShape(24.dp)).padding(4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            FilterChip(selected = !showRomMode, onClick = { showRomMode = false }, label = { Text("Android") })
+            Spacer(Modifier.width(4.dp))
+            FilterChip(selected = showRomMode, onClick = { showRomMode = true }, label = { Text("ROMы") })
         }
     }
 
