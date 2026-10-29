@@ -602,8 +602,9 @@ fun LauncherScreen() {
 
     if (isLandscape) {
         Row(
-            Modifier.fillMaxSize().wrapContentSize(Alignment.TopStart).statusBarsPadding()
-                .padding(start = 12.dp, top = 10.dp).glass(RoundedCornerShape(24.dp)).padding(4.dp),
+            Modifier.align(Alignment.TopEnd).statusBarsPadding()
+                .padding(top = 10.dp, end = 62.dp)
+                .glass(RoundedCornerShape(24.dp)).padding(4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             FilterChip(selected = !showRomMode, onClick = { showRomMode = false }, label = { Text("Android") })

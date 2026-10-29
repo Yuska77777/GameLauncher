@@ -255,13 +255,74 @@ fun RomsScreen(store: ImageStore, prefs: SharedPreferences, apps: List<AppItem>)
     val rootBackground = rememberImage(store, "rom_root_bg", 1600, true)
     val carouselBackground = rememberImage(store, folderImageKey("bg", folders[rootPager.currentPage]), 1600, true)
     val currentBackground = currentFolder?.let { rememberImage(store, folderImageKey("bg", it), 1600, true) }
+    val gamePager = rememberPagerState(initialPage = 0) { currentRoms.size }
+    LaunchedEffect(folderKey, currentRoms.size) {
+        if (currentRoms.isNotEmpty()) gamePager.scrollToPage(0)
+    }
+    val activeRom = currentRoms.getOrNull(gamePager.currentPage)
+    val activeRomBackground = activeRom?.let { rememberImage(store, romImageKey("cover", it.id), 1200, true) }
+    val activeRomMusic = activeRom?.let { prefs.getString("music_rom_${it.id}", null) }
+
+    val rootMusicUri = if (currentFolder == null) {
+        prefs.getString("music_rom_folder_${folders[rootPager.currentPage].key}", null)
+    } else null
+
+    DisposableEffect(rootMusicUri) {
+        var player: android.media.MediaPlayer? = null
+        if (!rootMusicUri.isNullOrBlank()) {
+            try {
+                player = android.media.MediaPlayer().apply {
+                    setAudioAttributes(android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_GAME)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build())
+                    setDataSource(context, Uri.parse(rootMusicUri))
+                    isLooping = true
+                    setVolume(0.22f, 0.22f)
+                    setOnPreparedListener { it.start() }
+                    setOnErrorListener { _, _, _ -> true }
+                    prepareAsync()
+                }
+            } catch (_: Exception) { try { player?.release() } catch (_: Exception) { } }
+        }
+        onDispose {
+            try { player?.stop() } catch (_: Exception) { }
+            try { player?.release() } catch (_: Exception) { }
+        }
+    }
+
+    DisposableEffect(activeRomMusic, folderKey) {
+        var player: android.media.MediaPlayer? = null
+        if (currentFolder != null && !activeRomMusic.isNullOrBlank()) {
+            try {
+                player = android.media.MediaPlayer().apply {
+                    setAudioAttributes(android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_GAME)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build())
+                    setDataSource(context, Uri.parse(activeRomMusic))
+                    isLooping = true
+                    setVolume(0.22f, 0.22f)
+                    setOnPreparedListener { it.start() }
+                    setOnErrorListener { _, _, _ -> true }
+                    prepareAsync()
+                }
+            } catch (_: Exception) { try { player?.release() } catch (_: Exception) { } }
+        }
+        onDispose {
+            try { player?.stop() } catch (_: Exception) { }
+            try { player?.release() } catch (_: Exception) { }
+        }
+    }
+
+    val screenBackground = when {
+        currentFolder == null -> carouselBackground ?: rootBackground
+        activeRomBackground != null -> activeRomBackground
+        else -> currentBackground
+    }
 
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF10264D), Color(0xFF05070F))))) {
-        if (currentFolder == null) {
-            FadeImage(carouselBackground ?: rootBackground, null, Modifier.fillMaxSize(), ContentScale.Crop)
-        } else {
-            FadeImage(currentBackground, null, Modifier.fillMaxSize(), ContentScale.Crop)
-        }
+        FadeImage(screenBackground, null, Modifier.fillMaxSize(), ContentScale.Crop)
         Box(Modifier.fillMaxSize().background(Color(0x8A000000)))
 
         if (currentFolder == null) {
@@ -269,23 +330,23 @@ fun RomsScreen(store: ImageStore, prefs: SharedPreferences, apps: List<AppItem>)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("ROM-библиотека", color = Color.White, fontSize = 34.sp, fontFamily = Light)
-                        Text("Перелистывай системы вправо и влево, как игры Android", color = Color.White.copy(alpha = .68f), fontSize = 12.sp)
+                        Text("Перелистывай системы вправо и влево", color = Color.White.copy(alpha = .68f), fontSize = 12.sp)
                     }
                     Button(onClick = { pendingPlatform = folders[rootPager.currentPage].key; picker.launch(arrayOf("*/*")) }) { Text("+ Добавить ROM") }
                 }
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
                 HorizontalPager(
                     state = rootPager,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 190.dp),
-                    pageSpacing = 22.dp
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    contentPadding = PaddingValues(horizontal = 230.dp),
+                    pageSpacing = 18.dp
                 ) { page ->
                     val folder = folders[page]
                     val title = prefs.getString("rom_folder_title_${folder.key}", folder.title) ?: folder.title
                     val icon = rememberImage(store, folderImageKey("icon", folder), 700, true)
                     val logo = rememberImage(store, folderImageKey("logo", folder), 1000)
                     val count = roms.count { it.platform == folder.key }
-                    val shape = RoundedCornerShape(30.dp)
+                    val shape = RoundedCornerShape(28.dp)
                     Column(
                         Modifier.fillMaxSize().combinedClickable(
                             onClick = { folderKey = folder.key },
@@ -293,19 +354,19 @@ fun RomsScreen(store: ImageStore, prefs: SharedPreferences, apps: List<AppItem>)
                         ),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Spacer(Modifier.height(26.dp))
-                        Box(Modifier.fillMaxWidth().weight(1f).clip(shape).glass(shape)) {
+                        Spacer(Modifier.height(12.dp))
+                        Box(Modifier.fillMaxWidth().height(410.dp).clip(shape).glass(shape)) {
                             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF263F6C), Color(0xFF111827)))))
                             if (icon != null) Image(icon, title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xCC000000)))))
+                            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xD9000000)))))
                             Column(Modifier.align(Alignment.BottomCenter).padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                if (logo != null) Image(logo, title, Modifier.fillMaxWidth().height(64.dp), contentScale = ContentScale.Fit)
-                                else Text(title, color = Color.White, fontSize = 28.sp, fontFamily = Medium)
+                                if (logo != null) Image(logo, title, Modifier.fillMaxWidth().height(58.dp), contentScale = ContentScale.Fit)
+                                else Text(title, color = Color.White, fontSize = 27.sp, fontFamily = Medium)
                                 Spacer(Modifier.height(5.dp))
                                 Text("$count игр · удержание — настройки", color = Color.White.copy(alpha = .72f), fontSize = 12.sp)
                             }
                         }
-                        Spacer(Modifier.height(14.dp))
+                        Spacer(Modifier.height(12.dp))
                         Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                             folders.indices.forEach { i ->
                                 Box(Modifier.padding(horizontal = 3.dp).size(if (i == rootPager.currentPage) 9.dp else 6.dp).clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = if (i == rootPager.currentPage) 1f else .35f)))
@@ -319,13 +380,13 @@ fun RomsScreen(store: ImageStore, prefs: SharedPreferences, apps: List<AppItem>)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(prefs.getString("rom_folder_title_${currentFolder.key}", currentFolder.title) ?: currentFolder.title, color = Color.White, fontSize = 32.sp, fontFamily = Light)
-                        Text("${currentRoms.size} игр · музыка системы здесь не играет", color = Color.White.copy(alpha = .65f), fontSize = 12.sp)
+                        Text("${currentRoms.size} игр · свайп вправо/влево · музыка выбранной игры", color = Color.White.copy(alpha = .65f), fontSize = 12.sp)
                     }
                     OutlinedButton(onClick = { folderKey = null }) { Text("‹ Системы") }
                     Spacer(Modifier.width(8.dp))
                     Button(onClick = { pendingPlatform = currentFolder.key; picker.launch(arrayOf("*/*")) }) { Text("+ Добавить") }
                 }
-                Spacer(Modifier.height(18.dp))
+                Spacer(Modifier.height(12.dp))
                 if (currentRoms.isEmpty()) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -335,34 +396,49 @@ fun RomsScreen(store: ImageStore, prefs: SharedPreferences, apps: List<AppItem>)
                         }
                     }
                 } else {
-                    LazyVerticalGrid(columns = GridCells.Adaptive(180.dp), contentPadding = PaddingValues(bottom = 24.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        items(currentRoms, key = { it.id }) { rom ->
-                            val cover = rememberImage(store, romImageKey("cover", rom.id), 700, true)
-                            val icon = rememberImage(store, romImageKey("icon", rom.id), 256)
-                            val logo = rememberImage(store, romImageKey("logo", rom.id), 800)
-                            val handler = savedHandler(context, prefs, rom)
-                            val shape = RoundedCornerShape(24.dp)
-                            Column(Modifier.fillMaxWidth().glass(shape).combinedClickable(
+                    HorizontalPager(
+                        state = gamePager,
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        contentPadding = PaddingValues(horizontal = 230.dp),
+                        pageSpacing = 18.dp
+                    ) { page ->
+                        val rom = currentRoms[page]
+                        val cover = rememberImage(store, romImageKey("cover", rom.id), 900, true)
+                        val icon = rememberImage(store, romImageKey("icon", rom.id), 300)
+                        val logo = rememberImage(store, romImageKey("logo", rom.id), 900)
+                        val handler = savedHandler(context, prefs, rom)
+                        val shape = RoundedCornerShape(26.dp)
+                        Column(
+                            Modifier.fillMaxSize().combinedClickable(
                                 onClick = {
                                     if (handler != null && startRomWithApp(context, Uri.parse(rom.uri), handler)) {
-                                        // Saved handler worked.
                                     } else {
                                         chooserRomId = rom.id
                                         chooserFilter = ""
                                     }
                                 },
                                 onLongClick = { editingRomId = rom.id }
-                            ).padding(12.dp)) {
-                                Box(Modifier.fillMaxWidth().height(170.dp).clip(RoundedCornerShape(17.dp))) {
-                                    if (cover != null) Image(cover, rom.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                                    else if (icon != null) Image(icon, rom.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                                    else Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF31486E), Color(0xFF121722)))))
-                                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xB5000000)))))
+                            ),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Spacer(Modifier.height(10.dp))
+                            Box(Modifier.fillMaxWidth().height(330.dp).clip(shape).glass(shape)) {
+                                if (cover != null) Image(cover, rom.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                else if (icon != null) Image(icon, rom.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                else Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF31486E), Color(0xFF121722)))))
+                                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xE0000000)))))
+                                Column(Modifier.align(Alignment.BottomCenter).padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                    if (logo != null) Image(logo, rom.title, Modifier.fillMaxWidth().height(50.dp), contentScale = ContentScale.Fit)
+                                    else Text(rom.title, color = Color.White, fontSize = 26.sp, fontFamily = Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Spacer(Modifier.height(5.dp))
+                                    Text(if (handler != null) "Открывать через: ${handler.label}" else "Нажми для выбора приложения", color = Color.White.copy(alpha = .62f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
-                                Spacer(Modifier.height(8.dp))
-                                if (logo != null) Image(logo, rom.title, Modifier.fillMaxWidth().height(34.dp), contentScale = ContentScale.Fit)
-                                else Text(rom.title, color = Color.White, fontFamily = Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(if (handler != null) "Открывать через: ${handler.label}" else "Нажми для выбора приложения", color = Color.White.copy(alpha = .55f), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            Spacer(Modifier.height(12.dp))
+                            Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                                currentRoms.indices.forEach { i ->
+                                    Box(Modifier.padding(horizontal = 3.dp).size(if (i == gamePager.currentPage) 9.dp else 6.dp).clip(RoundedCornerShape(50)).background(Color.White.copy(alpha = if (i == gamePager.currentPage) 1f else .35f)))
+                                }
                             }
                         }
                     }

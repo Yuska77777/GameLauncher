@@ -2,15 +2,11 @@ name: Build APK
 on:
   push:
   workflow_dispatch:
-permissions:
-  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Apply launcher UI migration
-        run: python3 tools/apply_launcher_ui.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
