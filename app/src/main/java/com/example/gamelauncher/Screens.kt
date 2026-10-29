@@ -587,7 +587,7 @@ fun LauncherScreen() {
             modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp, end = 58.dp)
         )
         Box(
-            Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 12.dp, end = 12.dp)
+            Modifier.fillMaxSize().wrapContentSize(Alignment.TopEnd).statusBarsPadding().padding(top = 12.dp, end = 12.dp)
                 .size(42.dp).glass(CircleShape).clickable { showSettings = true },
             contentAlignment = Alignment.Center
         ) {
