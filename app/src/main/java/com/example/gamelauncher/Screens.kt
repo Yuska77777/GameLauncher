@@ -68,6 +68,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
@@ -361,7 +362,7 @@ fun LauncherScreen() {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var showRomMode by rememberSaveable { mutableStateOf(false) }
-    var isLandscape by remember { mutableStateOf(false) }
+    val isLandscape = LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     val prefs = remember { ctx.getSharedPreferences("launcher", Context.MODE_PRIVATE) }
     val store = remember { ImageStore(ctx) }
     var apps by remember { mutableStateOf(emptyList<AppItem>()) }
@@ -509,6 +510,7 @@ fun LauncherScreen() {
         }
     }
 
+    if (!isLandscape || !showRomMode) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         HorizontalPager(
             state = pager,
@@ -593,11 +595,9 @@ fun LauncherScreen() {
         }
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        isLandscape = maxWidth > maxHeight
-        if (isLandscape && showRomMode) {
-            RomsScreen(store = store, prefs = prefs, apps = apps)
-        }
+    }
+    if (isLandscape && showRomMode) {
+        RomsScreen(store = store, prefs = prefs, apps = apps)
     }
 
     if (isLandscape) {
