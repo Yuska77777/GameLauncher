@@ -253,11 +253,15 @@ fun RomsScreen(store: ImageStore, prefs: SharedPreferences, apps: List<AppItem>)
     }
 
     val rootBackground = rememberImage(store, "rom_root_bg", 1600, true)
+    val carouselBackground = rememberImage(store, folderImageKey("bg", folders[rootPager.currentPage]), 1600, true)
     val currentBackground = currentFolder?.let { rememberImage(store, folderImageKey("bg", it), 1600, true) }
 
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF10264D), Color(0xFF05070F))))) {
-        if (currentFolder == null) FadeImage(rootBackground, null, Modifier.fillMaxSize(), ContentScale.Crop)
-        else FadeImage(currentBackground, null, Modifier.fillMaxSize(), ContentScale.Crop)
+        if (currentFolder == null) {
+            FadeImage(carouselBackground ?: rootBackground, null, Modifier.fillMaxSize(), ContentScale.Crop)
+        } else {
+            FadeImage(currentBackground, null, Modifier.fillMaxSize(), ContentScale.Crop)
+        }
         Box(Modifier.fillMaxSize().background(Color(0x8A000000)))
 
         if (currentFolder == null) {
@@ -341,7 +345,7 @@ fun RomsScreen(store: ImageStore, prefs: SharedPreferences, apps: List<AppItem>)
                             Column(Modifier.fillMaxWidth().glass(shape).combinedClickable(
                                 onClick = {
                                     if (handler != null && startRomWithApp(context, Uri.parse(rom.uri), handler)) {
-                                        // Saved handler worked; nothing else to do.
+                                        // Saved handler worked.
                                     } else {
                                         chooserRomId = rom.id
                                         chooserFilter = ""
