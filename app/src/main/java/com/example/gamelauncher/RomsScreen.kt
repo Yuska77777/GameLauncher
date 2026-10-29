@@ -181,7 +181,11 @@ fun RomsScreen(store: ImageStore, prefs: SharedPreferences, apps: List<AppItem>)
                                 }
                             }
                             Spacer(Modifier.height(9.dp))
-                            Text(rom.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (customLogo != null) {
+                                Image(customLogo, rom.title, Modifier.fillMaxWidth().height(38.dp), contentScale = ContentScale.Fit)
+                            } else {
+                                Text(rom.title, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
                             Text("Удерживай для настройки", color = Color.White.copy(alpha = 0.55f), fontSize = 10.sp)
                         }
                     }
