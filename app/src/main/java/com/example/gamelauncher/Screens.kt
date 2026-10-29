@@ -360,6 +360,8 @@ fun launchLauncherItem(ctx: Context, item: AppItem, prefs: SharedPreferences) {
 fun LauncherScreen() {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+    var showRomMode by rememberSaveable { mutableStateOf(false) }
+    var isLandscape by remember { mutableStateOf(false) }
     val prefs = remember { ctx.getSharedPreferences("launcher", Context.MODE_PRIVATE) }
     val store = remember { ImageStore(ctx) }
     var apps by remember { mutableStateOf(emptyList<AppItem>()) }
@@ -588,6 +590,32 @@ fun LauncherScreen() {
             contentAlignment = Alignment.Center
         ) {
             Text("⚙", color = Color.White, fontSize = 20.sp)
+        }
+    }
+
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        isLandscape = maxWidth > maxHeight
+        if (isLandscape) {
+            Row(
+                Modifier.align(Alignment.TopStart).statusBarsPadding().padding(start = 12.dp, top = 10.dp)
+                    .glass(RoundedCornerShape(24.dp)).padding(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FilterChip(
+                    selected = !showRomMode,
+                    onClick = { showRomMode = false },
+                    label = { Text("Android") }
+                )
+                Spacer(Modifier.width(4.dp))
+                FilterChip(
+                    selected = showRomMode,
+                    onClick = { showRomMode = true },
+                    label = { Text("ROMы") }
+                )
+            }
+        }
+        if (isLandscape && showRomMode) {
+            RomsScreen(store = store, prefs = prefs, apps = apps)
         }
     }
 
