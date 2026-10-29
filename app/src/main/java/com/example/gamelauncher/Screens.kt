@@ -602,7 +602,7 @@ fun LauncherScreen() {
 
     if (isLandscape) {
         Row(
-            Modifier.align(Alignment.TopEnd).statusBarsPadding()
+            Modifier.fillMaxSize().wrapContentSize(Alignment.TopEnd).statusBarsPadding()
                 .padding(top = 10.dp, end = 62.dp)
                 .glass(RoundedCornerShape(24.dp)).padding(4.dp),
             verticalAlignment = Alignment.CenterVertically
