@@ -202,7 +202,12 @@ fun LibraryScreen(
     onLaunch: (AppItem) -> Unit,
     onEdit: (AppItem) -> Unit,
     onPickBg: () -> Unit,
-    onResetBg: () -> Unit
+    onResetBg: () -> Unit,
+    libraryMusicUri: String?,
+    libraryMusicEnabled: Boolean,
+    onPickMusic: () -> Unit,
+    onToggleMusic: (Boolean) -> Unit,
+    onClearMusic: () -> Unit
 ) {
     var showAll by rememberSaveable { mutableStateOf(false) }
     val bg = rememberImage(store, "libbg", 1600, true)
@@ -222,6 +227,24 @@ fun LibraryScreen(
                 )
                 TextButton(onClick = onPickBg) { Text("Фон") }
                 TextButton(onClick = onResetBg) { Text("Сброс") }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Музыка библиотеки", color = Color.White, fontFamily = Medium)
+                    Text(
+                        when {
+                            !libraryMusicEnabled -> "Выключена"
+                            !libraryMusicUri.isNullOrBlank() -> "Играет, если у выбранной игры нет своей музыки"
+                            else -> "Добавь свой трек для библиотеки"
+                        },
+                        color = Color.White.copy(alpha = 0.65f), fontSize = 11.sp
+                    )
+                }
+                TextButton(onClick = onPickMusic) { Text(if (libraryMusicUri.isNullOrBlank()) "Добавить" else "Заменить") }
+                Switch(checked = libraryMusicEnabled, onCheckedChange = onToggleMusic)
+            }
+            if (!libraryMusicUri.isNullOrBlank()) {
+                TextButton(onClick = onClearMusic) { Text("Убрать музыку библиотеки") }
             }
             Spacer(Modifier.height(6.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -348,6 +371,8 @@ fun LauncherScreen() {
     var pickKey by rememberSaveable { mutableStateOf<String?>(null) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var customSoundUri by rememberSaveable { mutableStateOf(prefs.getString("navigation_sound_uri", null)) }
+    var libraryMusicUri by rememberSaveable { mutableStateOf(prefs.getString("library_music_uri", null)) }
+    var libraryMusicEnabled by rememberSaveable { mutableStateOf(prefs.getBoolean("library_music_enabled", true)) }
     var showAppPicker by rememberSaveable { mutableStateOf(false) }
     var navigationSounds by rememberSaveable { mutableStateOf(prefs.getBoolean("navigation_sounds", true)) }
     var animationSpeed by rememberSaveable { mutableFloatStateOf(prefs.getFloat("animation_speed", 1f)) }
@@ -367,6 +392,10 @@ fun LauncherScreen() {
                 prefs.edit().putString(k, uri.toString()).apply()
             } else {
                 when (k) {
+                    "library_music" -> {
+                        libraryMusicUri = uri.toString()
+                        prefs.edit().putString("library_music_uri", libraryMusicUri).apply()
+                    }
                     "navigation_sound" -> {
                         customSoundUri = uri.toString()
                         prefs.edit().putString("navigation_sound_uri", customSoundUri).apply()
@@ -382,8 +411,13 @@ fun LauncherScreen() {
             .sortedWith(compareBy<AppItem> { rank[it.pkg] ?: Int.MAX_VALUE }.thenBy { it.label.lowercase() })
     }
     val pager = rememberPagerState(pageCount = { games.size + 1 })
-    val activeMusicUri = if (pager.currentPage < games.size) {
+    val selectedGameMusic = if (pager.currentPage < games.size) {
         prefs.getString("music_${games[pager.currentPage].pkg}", null)
+    } else null
+    val activeMusicUri = if (!selectedGameMusic.isNullOrBlank()) {
+        selectedGameMusic
+    } else if (libraryMusicEnabled) {
+        libraryMusicUri
     } else null
 
     var lifecycleContext: android.content.Context = ctx
@@ -521,7 +555,18 @@ fun LauncherScreen() {
                             pickKey = "libbg"
                             picker.launch("image/*")
                         },
-                        onResetBg = { store.delete("libbg") }
+                        onResetBg = { store.delete("libbg") },
+                        libraryMusicUri = libraryMusicUri,
+                        libraryMusicEnabled = libraryMusicEnabled,
+                        onPickMusic = { pickKey = "library_music"; audioPicker.launch(arrayOf("audio/mpeg", "audio/*")) },
+                        onToggleMusic = {
+                            libraryMusicEnabled = it
+                            prefs.edit().putBoolean("library_music_enabled", it).apply()
+                        },
+                        onClearMusic = {
+                            libraryMusicUri = null
+                            prefs.edit().remove("library_music_uri").apply()
+                        }
                     )
                 }
             }
