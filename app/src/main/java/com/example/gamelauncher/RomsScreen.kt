@@ -223,35 +223,6 @@ fun RomsScreen(store: ImageStore, prefs: SharedPreferences, apps: List<AppItem>)
     val currentFolder = folders.firstOrNull { it.key == folderKey }
     val currentRoms = roms.filter { it.platform == folderKey }
 
-    // Music is only for the system carousel. It is intentionally disabled inside a folder.
-    val rootMusicUri = if (currentFolder == null) {
-        prefs.getString("music_rom_folder_${folders[rootPager.currentPage].key}", null)
-    } else null
-
-    DisposableEffect(rootMusicUri) {
-        var player: android.media.MediaPlayer? = null
-        if (!rootMusicUri.isNullOrBlank()) {
-            try {
-                player = android.media.MediaPlayer().apply {
-                    setAudioAttributes(android.media.AudioAttributes.Builder()
-                        .setUsage(android.media.AudioAttributes.USAGE_GAME)
-                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
-                        .build())
-                    setDataSource(context, Uri.parse(rootMusicUri))
-                    isLooping = true
-                    setVolume(0.22f, 0.22f)
-                    setOnPreparedListener { it.start() }
-                    setOnErrorListener { _, _, _ -> true }
-                    prepareAsync()
-                }
-            } catch (_: Exception) { try { player?.release() } catch (_: Exception) { } }
-        }
-        onDispose {
-            try { player?.stop() } catch (_: Exception) { }
-            try { player?.release() } catch (_: Exception) { }
-        }
-    }
-
     val rootBackground = rememberImage(store, "rom_root_bg", 1600, true)
     val carouselBackground = rememberImage(store, folderImageKey("bg", folders[rootPager.currentPage]), 1600, true)
     val currentBackground = currentFolder?.let { rememberImage(store, folderImageKey("bg", it), 1600, true) }
