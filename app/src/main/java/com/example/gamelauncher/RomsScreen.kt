@@ -99,7 +99,7 @@ fun RomsScreen(store: ImageStore, prefs: SharedPreferences, apps: List<AppItem>)
         val id = editingId
         if (uri != null && id != null) {
             val key = pendingPlatform
-            store.save("rom_${key}_$id", uri)
+            store.save("${key}_$id", uri)
         }
     }
 
@@ -150,6 +150,7 @@ fun RomsScreen(store: ImageStore, prefs: SharedPreferences, apps: List<AppItem>)
                 ) {
                     items(shown, key = { it.id }) { rom ->
                         val cover = rememberImage(store, "rom_cover_${rom.id}", 600, true)
+                        val customLogo = rememberImage(store, "rom_logo_${rom.id}", 600)
                         val customIcon = rememberImage(store, "rom_icon_${rom.id}", 256)
                         Column(
                             Modifier.fillMaxWidth().glass(RoundedCornerShape(20.dp))
