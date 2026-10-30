@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -160,6 +161,9 @@ private fun DrawableIcon(drawable: Drawable, modifier: Modifier) {
 @Composable
 fun RomsScreen(store: ImageStore, prefs: SharedPreferences, apps: List<AppItem>) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val rootPagerSidePadding = ((configuration.screenWidthDp.dp - 220.dp) / 2).coerceAtLeast(0.dp)
+    val gamePagerSidePadding = ((configuration.screenWidthDp.dp - 210.dp) / 2).coerceAtLeast(0.dp)
     var refresh by remember { mutableIntStateOf(0) }
     var folderKey by rememberSaveable { mutableStateOf<String?>(null) }
     var editingFolderKey by rememberSaveable { mutableStateOf<String?>(null) }
@@ -309,7 +313,8 @@ fun RomsScreen(store: ImageStore, prefs: SharedPreferences, apps: List<AppItem>)
                 HorizontalPager(
                     state = rootPager,
                     modifier = Modifier.fillMaxWidth().weight(1f),
-                    contentPadding = PaddingValues(horizontal = 230.dp),
+                    pageSize = androidx.compose.foundation.pager.PageSize.Fixed(220.dp),
+                    contentPadding = PaddingValues(horizontal = rootPagerSidePadding),
                     pageSpacing = 18.dp
                 ) { page ->
                     val folder = folders[page]
@@ -326,7 +331,7 @@ fun RomsScreen(store: ImageStore, prefs: SharedPreferences, apps: List<AppItem>)
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Spacer(Modifier.height(12.dp))
-                        Box(Modifier.fillMaxWidth().height(410.dp).clip(shape).glass(shape)) {
+                        Box(Modifier.fillMaxWidth().height(300.dp).clip(shape).glass(shape)) {
                             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF263F6C), Color(0xFF111827)))))
                             if (icon != null) Image(icon, title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xD9000000)))))
@@ -370,7 +375,8 @@ fun RomsScreen(store: ImageStore, prefs: SharedPreferences, apps: List<AppItem>)
                     HorizontalPager(
                         state = gamePager,
                         modifier = Modifier.fillMaxWidth().weight(1f),
-                        contentPadding = PaddingValues(horizontal = 230.dp),
+                        pageSize = androidx.compose.foundation.pager.PageSize.Fixed(210.dp),
+                        contentPadding = PaddingValues(horizontal = gamePagerSidePadding),
                         pageSpacing = 18.dp
                     ) { page ->
                         val rom = currentRoms[page]
@@ -393,7 +399,7 @@ fun RomsScreen(store: ImageStore, prefs: SharedPreferences, apps: List<AppItem>)
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Spacer(Modifier.height(10.dp))
-                            Box(Modifier.fillMaxWidth().height(330.dp).clip(shape).glass(shape)) {
+                            Box(Modifier.fillMaxWidth().height(290.dp).clip(shape).glass(shape)) {
                                 if (cover != null) Image(cover, rom.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                                 else if (icon != null) Image(icon, rom.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                                 else Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF31486E), Color(0xFF121722)))))
