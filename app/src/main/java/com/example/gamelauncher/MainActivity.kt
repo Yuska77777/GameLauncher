@@ -22,6 +22,12 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.util.LruCache
+import android.view.InputDevice
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -87,6 +93,28 @@ val Medium = FontFamily(Typeface.create("sans-serif-medium", Typeface.NORMAL))
 val Soft = Shadow(Color.Black.copy(alpha = 0.55f), blurRadius = 14f)
 
 val resumeTick = mutableIntStateOf(0)
+val animationSpeedScale = androidx.compose.runtime.mutableFloatStateOf(1f)
+
+fun playNavigationSound(ctx: Context, enabled: Boolean, customUri: String? = null) {
+    if (!enabled) return
+    if (!customUri.isNullOrBlank()) {
+        try {
+            val player = android.media.MediaPlayer.create(ctx, Uri.parse(customUri))
+            if (player != null) {
+                player.setVolume(0.55f, 0.55f)
+                player.setOnCompletionListener { it.release() }
+                player.setOnErrorListener { mp, _, _ -> mp.release(); true }
+                player.start()
+                return
+            }
+        } catch (_: Exception) { }
+    }
+    try {
+        val tone = android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC, 28)
+        tone.startTone(android.media.ToneGenerator.TONE_PROP_ACK, 75)
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ tone.release() }, 120)
+    } catch (_: Exception) { }
+}
 
 class MainActivity : ComponentActivity() {
     private lateinit var audioManager: AudioManager
@@ -113,6 +141,23 @@ class MainActivity : ComponentActivity() {
                 )
             ) { LauncherScreen() }
         }
+        window.decorView.post { installGamepadOverlay() }
+    }
+
+    private fun installGamepadOverlay() {
+        val content = findViewById<ViewGroup>(android.R.id.content) ?: return
+        if (content.findViewWithTag<View>("gamepad_overlay") != null) return
+        val target = content.getChildAt(0) ?: return
+        val overlay = GamepadInputView(this, target)
+        overlay.tag = "gamepad_overlay"
+        content.addView(
+            overlay,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        overlay.requestFocus()
     }
 
     override fun onResume() {
@@ -139,6 +184,100 @@ class MainActivity : ComponentActivity() {
         launcherAudioFocus?.let { audioManager.abandonAudioFocusRequest(it) }
         super.onPause()
     }
+}
+
+private class GamepadInputView(
+    private val activity: ComponentActivity,
+    private val target: View
+) : View(activity) {
+    private var lastAxisAction = 0L
+    private val axisCooldown = 280L
+
+    init {
+        isFocusable = true
+        isFocusableInTouchMode = true
+        setOnFocusChangeListener { _, hasFocus -> if (!hasFocus) post { requestFocus() } }
+        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+    }
+
+    private fun isController(event: KeyEvent): Boolean =
+        event.isFromSource(InputDevice.SOURCE_GAMEPAD) || event.isFromSource(InputDevice.SOURCE_DPAD)
+
+    private fun isController(event: MotionEvent): Boolean =
+        event.isFromSource(InputDevice.SOURCE_GAMEPAD) || event.isFromSource(InputDevice.SOURCE_JOYSTICK)
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (!isController(event)) return super.onKeyDown(keyCode, event)
+        if (event.repeatCount != 0) return true
+        when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT,
+            KeyEvent.KEYCODE_BUTTON_L1 -> {
+                swipePager(-1)
+                playNavigationSound(activity, true)
+            }
+            KeyEvent.KEYCODE_DPAD_RIGHT,
+            KeyEvent.KEYCODE_BUTTON_R1 -> {
+                swipePager(1)
+                playNavigationSound(activity, true)
+            }
+            KeyEvent.KEYCODE_BUTTON_A,
+            KeyEvent.KEYCODE_DPAD_CENTER -> tapPlay()
+            KeyEvent.KEYCODE_BUTTON_B,
+            KeyEvent.KEYCODE_BACK -> activity.onBackPressedDispatcher.onBackPressed()
+            else -> return true
+        }
+        return true
+    }
+
+    override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+        if (!isController(event) || event.action != MotionEvent.ACTION_MOVE) {
+            return super.onGenericMotionEvent(event)
+        }
+        val x = event.getAxisValue(MotionEvent.AXIS_X)
+        val y = event.getAxisValue(MotionEvent.AXIS_Y)
+        val now = System.currentTimeMillis()
+        if (now - lastAxisAction >= axisCooldown) {
+            if (x <= -0.65f) {
+                lastAxisAction = now
+                swipePager(-1)
+                playNavigationSound(activity, true)
+                return true
+            }
+            if (x >= 0.65f) {
+                lastAxisAction = now
+                swipePager(1)
+                playNavigationSound(activity, true)
+                return true
+            }
+        }
+        if (abs(y) > 0.65f) return true
+        return true
+    }
+
+    private fun swipePager(direction: Int) {
+        val w = target.width.coerceAtLeast(1).toFloat()
+        val h = target.height.coerceAtLeast(1).toFloat()
+        val y = h * 0.55f
+        val fromX = if (direction < 0) w * 0.72f else w * 0.28f
+        val toX = if (direction < 0) w * 0.28f else w * 0.72f
+        val downTime = System.currentTimeMillis()
+        target.dispatchTouchEvent(MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, fromX, y, 0))
+        target.dispatchTouchEvent(MotionEvent.obtain(downTime, downTime + 80, MotionEvent.ACTION_MOVE, (fromX + toX) / 2f, y, 0))
+        target.dispatchTouchEvent(MotionEvent.obtain(downTime, downTime + 180, MotionEvent.ACTION_MOVE, toX, y, 0))
+        target.dispatchTouchEvent(MotionEvent.obtain(downTime, downTime + 200, MotionEvent.ACTION_UP, toX, y, 0))
+    }
+
+    private fun tapPlay() {
+        val w = target.width.coerceAtLeast(1).toFloat()
+        val h = target.height.coerceAtLeast(1).toFloat()
+        val x = w * 0.16f
+        val y = h - 118f * resources.displayMetrics.density
+        val downTime = System.currentTimeMillis()
+        target.dispatchTouchEvent(MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0))
+        target.dispatchTouchEvent(MotionEvent.obtain(downTime, downTime + 60, MotionEvent.ACTION_UP, x, y, 0))
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean = false
 }
 
 fun Modifier.glass(shape: Shape, strong: Boolean = false): Modifier = this

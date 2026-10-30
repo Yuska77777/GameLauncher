@@ -15,6 +15,7 @@ import android.content.pm.ApplicationInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Typeface
+import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -37,6 +38,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -65,6 +68,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
@@ -199,7 +203,12 @@ fun LibraryScreen(
     onLaunch: (AppItem) -> Unit,
     onEdit: (AppItem) -> Unit,
     onPickBg: () -> Unit,
-    onResetBg: () -> Unit
+    onResetBg: () -> Unit,
+    libraryMusicUri: String?,
+    libraryMusicEnabled: Boolean,
+    onPickMusic: () -> Unit,
+    onToggleMusic: (Boolean) -> Unit,
+    onClearMusic: () -> Unit
 ) {
     var showAll by rememberSaveable { mutableStateOf(false) }
     val bg = rememberImage(store, "libbg", 1600, true)
@@ -219,6 +228,24 @@ fun LibraryScreen(
                 )
                 TextButton(onClick = onPickBg) { Text("Фон") }
                 TextButton(onClick = onResetBg) { Text("Сброс") }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Музыка библиотеки", color = Color.White, fontFamily = Medium)
+                    Text(
+                        when {
+                            !libraryMusicEnabled -> "Выключена"
+                            !libraryMusicUri.isNullOrBlank() -> "Играет, если у выбранной игры нет своей музыки"
+                            else -> "Добавь свой трек для библиотеки"
+                        },
+                        color = Color.White.copy(alpha = 0.65f), fontSize = 11.sp
+                    )
+                }
+                TextButton(onClick = onPickMusic) { Text(if (libraryMusicUri.isNullOrBlank()) "Добавить" else "Заменить") }
+                Switch(checked = libraryMusicEnabled, onCheckedChange = onToggleMusic)
+            }
+            if (!libraryMusicUri.isNullOrBlank()) {
+                TextButton(onClick = onClearMusic) { Text("Убрать музыку библиотеки") }
             }
             Spacer(Modifier.height(6.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -241,7 +268,7 @@ fun LibraryScreen(
                     val custom = rememberImage(store, "icon_${app.pkg}", 256)
                     val src = remember { MutableInteractionSource() }
                     val pressed by src.collectIsPressedAsState()
-                    val sc by animateFloatAsState(if (pressed) 0.92f else 1f, tween(120), label = "press")
+                    val sc by animateFloatAsState(if (pressed) 0.92f else 1f, tween((120 / animationSpeedScale.floatValue).toInt().coerceAtLeast(1)), label = "press")
                     Column(
                         Modifier
                             .graphicsLayer { scaleX = sc; scaleY = sc }
@@ -292,7 +319,7 @@ fun TileRow(
     ) {
         items(count = games.size + 1) { i ->
             val selected = i == current
-            val tileSize by animateDpAsState(if (selected) 80.dp else 62.dp, tween(250), label = "tile")
+            val tileSize by animateDpAsState(if (selected) 80.dp else 62.dp, tween((250 / animationSpeedScale.floatValue).toInt().coerceAtLeast(1)), label = "tile")
             val shape = RoundedCornerShape(22.dp)
             if (i < games.size) {
                 val app = games[i]
@@ -322,10 +349,20 @@ fun TileRow(
     }
 }
 
+fun launchLauncherItem(ctx: Context, item: AppItem, prefs: SharedPreferences) {
+    val intent = ctx.packageManager.getLaunchIntentForPackage(item.pkg)
+    if (intent != null) {
+        prefs.edit().putLong("t_${item.pkg}", System.currentTimeMillis()).apply()
+        ctx.startActivity(intent)
+    }
+}
+
 @Composable
 fun LauncherScreen() {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+    var showRomMode by rememberSaveable { mutableStateOf(false) }
+    val isLandscape = LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     val prefs = remember { ctx.getSharedPreferences("launcher", Context.MODE_PRIVATE) }
     val store = remember { ImageStore(ctx) }
     var apps by remember { mutableStateOf(emptyList<AppItem>()) }
@@ -335,6 +372,14 @@ fun LauncherScreen() {
     var hasUsage by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<AppItem?>(null) }
     var pickKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+    var customSoundUri by rememberSaveable { mutableStateOf(prefs.getString("navigation_sound_uri", null)) }
+    var libraryMusicUri by rememberSaveable { mutableStateOf(prefs.getString("library_music_uri", null)) }
+    var libraryMusicEnabled by rememberSaveable { mutableStateOf(prefs.getBoolean("library_music_enabled", true)) }
+    var showAppPicker by rememberSaveable { mutableStateOf(false) }
+    var navigationSounds by rememberSaveable { mutableStateOf(prefs.getBoolean("navigation_sounds", true)) }
+    var animationSpeed by rememberSaveable { mutableFloatStateOf(prefs.getFloat("animation_speed", 1f)) }
+    SideEffect { animationSpeedScale.floatValue = animationSpeed }
     val tick = resumeTick.intValue
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -342,15 +387,115 @@ fun LauncherScreen() {
         if (uri != null && k != null) store.save(k, uri)
         pickKey = null
     }
+    val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            try { ctx.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) { }
+            val k = pickKey
+            if (k != null && k.startsWith("music_")) {
+                prefs.edit().putString(k, uri.toString()).apply()
+            } else {
+                when (k) {
+                    "library_music" -> {
+                        libraryMusicUri = uri.toString()
+                        prefs.edit().putString("library_music_uri", libraryMusicUri).apply()
+                    }
+                    "navigation_sound" -> {
+                        customSoundUri = uri.toString()
+                        prefs.edit().putString("navigation_sound_uri", customSoundUri).apply()
+                    }
+                }
+            }
+        }
+        pickKey = null
+    }
+
+    val games = remember(apps, carousel, rank) {
+        apps.filter { it.pkg in carousel }
+            .sortedWith(compareBy<AppItem> { rank[it.pkg] ?: Int.MAX_VALUE }.thenBy { it.label.lowercase() })
+    }
+    val pager = rememberPagerState(pageCount = { games.size + 1 })
+    val selectedGameMusic = if (pager.currentPage < games.size) {
+        prefs.getString("music_${games[pager.currentPage].pkg}", null)
+    } else null
+    val activeMusicUri = if (!selectedGameMusic.isNullOrBlank()) {
+        selectedGameMusic
+    } else if (libraryMusicEnabled) {
+        libraryMusicUri
+    } else null
+
+    var lifecycleContext: android.content.Context = ctx
+    while (lifecycleContext is android.content.ContextWrapper && lifecycleContext !is android.app.Activity) {
+        lifecycleContext = lifecycleContext.baseContext
+    }
+    val lifecycleOwner = lifecycleContext as? androidx.lifecycle.LifecycleOwner
+    DisposableEffect(activeMusicUri, lifecycleOwner) {
+        var player: MediaPlayer? = null
+        var isForeground = lifecycleOwner?.lifecycle?.currentState?.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) ?: true
+        var isPrepared = false
+        var shouldPlay = true
+        if (!activeMusicUri.isNullOrBlank()) {
+            try {
+                val newPlayer = MediaPlayer()
+                player = newPlayer
+                newPlayer.setAudioAttributes(
+                    android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_GAME)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                newPlayer.setDataSource(ctx, Uri.parse(activeMusicUri))
+                newPlayer.setVolume(0.22f, 0.22f)
+                newPlayer.isLooping = true
+                newPlayer.setOnPreparedListener { readyPlayer ->
+                    isPrepared = true
+                    if (isForeground && shouldPlay) {
+                        try { readyPlayer.start() } catch (_: Exception) { }
+                    }
+                }
+                newPlayer.setOnErrorListener { _, _, _ -> true }
+                newPlayer.prepareAsync()
+            } catch (_: Exception) {
+                try { player?.release() } catch (_: Exception) { }
+                player = null
+            }
+        }
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_STOP -> {
+                    isForeground = false
+                    val activePlayer = player
+                    if (activePlayer != null && isPrepared) {
+                        shouldPlay = try { activePlayer.isPlaying } catch (_: Exception) { false }
+                        try { if (activePlayer.isPlaying) activePlayer.pause() } catch (_: Exception) { }
+                    }
+                }
+                androidx.lifecycle.Lifecycle.Event.ON_START -> {
+                    isForeground = true
+                    if (shouldPlay && isPrepared) {
+                        try { player?.start() } catch (_: Exception) { }
+                    }
+                }
+                else -> Unit
+            }
+        }
+        lifecycleOwner?.lifecycle?.addObserver(observer)
+        onDispose {
+            lifecycleOwner?.lifecycle?.removeObserver(observer)
+            try { player?.setOnPreparedListener(null) } catch (_: Exception) { }
+            try { player?.stop() } catch (_: Exception) { }
+            try { player?.release() } catch (_: Exception) { }
+            player = null
+        }
+    }
 
     LaunchedEffect(Unit) {
-        val list = withContext(Dispatchers.Default) { loadApps(ctx) }
-        apps = list
+        val installed = withContext(Dispatchers.Default) { loadApps(ctx) }
+        apps = installed
         if (!prefs.contains("carousel")) {
-            prefs.edit().putStringSet("carousel", list.filter { it.isGame }.map { it.pkg }.toSet()).apply()
+            prefs.edit().putStringSet("carousel", installed.filter { it.isGame }.map { it.pkg }.toSet()).apply()
         }
         carousel = (prefs.getStringSet("carousel", emptySet()) ?: emptySet()).toSet()
-        rank = list.sortedByDescending { prefs.getLong("t_${it.pkg}", 0L) }
+        rank = installed.sortedByDescending { prefs.getLong("t_${it.pkg}", 0L) }
             .mapIndexed { i, a -> a.pkg to i }.toMap()
     }
 
@@ -365,12 +510,7 @@ fun LauncherScreen() {
         }
     }
 
-    val games = remember(apps, carousel, rank) {
-        apps.filter { it.pkg in carousel }
-            .sortedWith(compareBy<AppItem> { rank[it.pkg] ?: Int.MAX_VALUE }.thenBy { it.label.lowercase() })
-    }
-    val pager = rememberPagerState(pageCount = { games.size + 1 })
-
+    if (!isLandscape || !showRomMode) {
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         HorizontalPager(
             state = pager,
@@ -400,12 +540,7 @@ fun LauncherScreen() {
                         hasUsage = hasUsage,
                         active = pager.currentPage == page && !pager.isScrollInProgress,
                         offset = off,
-                        onPlay = {
-                            ctx.packageManager.getLaunchIntentForPackage(app.pkg)?.let {
-                                prefs.edit().putLong("t_${app.pkg}", System.currentTimeMillis()).apply()
-                                ctx.startActivity(it)
-                            }
-                        },
+                        onPlay = { launchLauncherItem(ctx, app, prefs) },
                         onEdit = { editing = app },
                         onUsage = {
                             ctx.startActivity(
@@ -418,18 +553,24 @@ fun LauncherScreen() {
                         apps = apps,
                         carousel = carousel,
                         store = store,
-                        onLaunch = { a ->
-                            ctx.packageManager.getLaunchIntentForPackage(a.pkg)?.let {
-                                prefs.edit().putLong("t_${a.pkg}", System.currentTimeMillis()).apply()
-                                ctx.startActivity(it)
-                            }
-                        },
+                        onLaunch = { a -> launchLauncherItem(ctx, a, prefs) },
                         onEdit = { a -> editing = a },
                         onPickBg = {
                             pickKey = "libbg"
                             picker.launch("image/*")
                         },
-                        onResetBg = { store.delete("libbg") }
+                        onResetBg = { store.delete("libbg") },
+                        libraryMusicUri = libraryMusicUri,
+                        libraryMusicEnabled = libraryMusicEnabled,
+                        onPickMusic = { pickKey = "library_music"; audioPicker.launch(arrayOf("audio/mpeg", "audio/*")) },
+                        onToggleMusic = {
+                            libraryMusicEnabled = it
+                            prefs.edit().putBoolean("library_music_enabled", it).apply()
+                        },
+                        onClearMusic = {
+                            libraryMusicUri = null
+                            prefs.edit().remove("library_music_uri").apply()
+                        }
                     )
                 }
             }
@@ -438,22 +579,122 @@ fun LauncherScreen() {
             games = games,
             current = pager.currentPage,
             store = store,
-            onSelect = { i -> scope.launch { pager.animateScrollToPage(i) } },
+            onSelect = { i ->
+                playNavigationSound(ctx, navigationSounds, customSoundUri)
+                scope.launch { pager.animateScrollToPage(i) }
+            },
             onEdit = { a -> editing = a },
-            modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp)
+            modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 8.dp, end = 58.dp)
+        )
+        Box(
+            Modifier.fillMaxSize().wrapContentSize(Alignment.TopEnd).statusBarsPadding().padding(top = 12.dp, end = 12.dp)
+                .size(42.dp).glass(CircleShape).clickable { showSettings = true },
+            contentAlignment = Alignment.Center
+        ) {
+            Text("⚙", color = Color.White, fontSize = 20.sp)
+        }
+    }
+
+    }
+    if (isLandscape && showRomMode) {
+        RomsScreen(store = store, prefs = prefs, apps = apps)
+    }
+
+    if (isLandscape) {
+        Row(
+            Modifier.fillMaxSize().wrapContentSize(Alignment.TopEnd).statusBarsPadding()
+                .padding(top = 10.dp, end = 62.dp)
+                .glass(RoundedCornerShape(24.dp)).padding(4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            FilterChip(selected = !showRomMode, onClick = { showRomMode = false }, label = { Text("Android") })
+            Spacer(Modifier.width(4.dp))
+            FilterChip(selected = showRomMode, onClick = { showRomMode = true }, label = { Text("ROMы") })
+        }
+    }
+
+    if (showSettings) {
+        AlertDialog(
+            onDismissRequest = { showSettings = false },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = Color(0xE61B1F2A),
+            title = { Text("Настройки лаунчера", fontFamily = Light) },
+            text = {
+                Column(Modifier.heightIn(max = 430.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Скорость анимаций", color = Color.White)
+                    Text(when { animationSpeed < 0.8f -> "Медленно"; animationSpeed > 1.2f -> "Быстро"; else -> "Обычно" }, color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                    Slider(value = animationSpeed, onValueChange = { animationSpeed = it; animationSpeedScale.floatValue = it }, valueRange = 0.5f..1.8f, steps = 4)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Звук переключения", color = Color.White)
+                            Text(if (customSoundUri.isNullOrBlank()) "Мягкий системный звук" else "Свой звук выбран", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
+                        }
+                        Switch(checked = navigationSounds, onCheckedChange = {
+                            navigationSounds = it
+                            prefs.edit().putBoolean("navigation_sounds", it).apply()
+                            if (it) playNavigationSound(ctx, true, customSoundUri)
+                        })
+                    }
+                    OutlinedButton(onClick = { pickKey = "navigation_sound"; audioPicker.launch(arrayOf("audio/mpeg", "audio/*")) }, modifier = Modifier.fillMaxWidth()) { Text("Импортировать звук переключения (MP3)") }
+                    if (!customSoundUri.isNullOrBlank()) TextButton(onClick = { customSoundUri = null; prefs.edit().remove("navigation_sound_uri").apply() }) { Text("Сбросить свой звук") }
+                    Divider(color = Color.White.copy(alpha = 0.15f))
+                    Text("Ярлыки", color = Color.White)
+                    OutlinedButton(onClick = { showAppPicker = true; showSettings = false }, modifier = Modifier.fillMaxWidth()) { Text("Добавить ярлык приложения или игры") }
+                    Text("Выбери установленное приложение — оно появится в карусели и будет запускаться напрямую.", color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp)
+                }
+            },
+            confirmButton = { TextButton(onClick = { prefs.edit().putFloat("animation_speed", animationSpeed).apply(); showSettings = false }) { Text("Готово") } }
+        )
+    }
+
+    if (showAppPicker) {
+        val availableApps = apps.filter { it.pkg !in carousel }
+        AlertDialog(
+            onDismissRequest = { showAppPicker = false },
+            shape = RoundedCornerShape(28.dp),
+            containerColor = Color(0xE61B1F2A),
+            title = { Text("Добавить приложение", fontFamily = Light) },
+            text = {
+                if (availableApps.isEmpty()) {
+                    Text("Все найденные приложения уже добавлены в карусель.", color = Color.White)
+                } else {
+                    Column(
+                        Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        availableApps.forEach { app ->
+                            Row(
+                                Modifier.fillMaxWidth().clickable {
+                                    carousel = carousel + app.pkg
+                                    prefs.edit().putStringSet("carousel", carousel).apply()
+                                    showAppPicker = false
+                                }.padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Image(app.icon, app.label, Modifier.size(42.dp).clip(RoundedCornerShape(10.dp)))
+                                Spacer(Modifier.width(12.dp))
+                                Text(app.label, color = Color.White, modifier = Modifier.weight(1f))
+                                Text("+", color = Color(0xFF8DB8FF), fontSize = 22.sp)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showAppPicker = false }) { Text("Готово") } }
         )
     }
 
     val target = editing
     if (target != null) {
         val inCarousel = target.pkg in carousel
+        val targetMusicUri = prefs.getString("music_${target.pkg}", null)
         AlertDialog(
             onDismissRequest = { editing = null },
             shape = RoundedCornerShape(28.dp),
             containerColor = Color(0xE61B1F2A),
             title = { Text(target.label, fontFamily = Light) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.heightIn(max = 430.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = { pickKey = "bg_${target.pkg}"; picker.launch("image/*") },
                         modifier = Modifier.fillMaxWidth()
@@ -466,6 +707,21 @@ fun LauncherScreen() {
                         onClick = { pickKey = "icon_${target.pkg}"; picker.launch("image/*") },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Картинка плитки") }
+                    OutlinedButton(
+                        onClick = { pickKey = "music_${target.pkg}"; audioPicker.launch(arrayOf("audio/mpeg", "audio/*")) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Выбрать фоновую музыку") }
+                    Text(
+                        if (targetMusicUri.isNullOrBlank()) "Музыка для этой игры не выбрана"
+                        else "Музыка выбрана — будет играть при выборе этой игры",
+                        color = Color.White.copy(alpha = 0.65f),
+                        fontSize = 12.sp
+                    )
+                    if (!targetMusicUri.isNullOrBlank()) {
+                        TextButton(
+                            onClick = { prefs.edit().remove("music_${target.pkg}").apply() }
+                        ) { Text("Убрать музыку этой игры") }
+                    }
                     OutlinedButton(
                         onClick = {
                             store.delete("bg_${target.pkg}")
